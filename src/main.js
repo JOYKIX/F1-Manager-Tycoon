@@ -20,6 +20,7 @@ const money = new Intl.NumberFormat('fr-FR', { style: 'currency', currency: 'EUR
 const dateFormat = new Intl.DateTimeFormat('fr-FR', { day: '2-digit', month: 'short', year: 'numeric' });
 const cache = new Map();
 const raceResultCache = new Map();
+const standingsCache = new Map();
 let game = null;
 let activePage = 'home';
 let raceTimer = null;
@@ -30,6 +31,7 @@ const pages = [
   ['home', 'Accueil'],
   ['race', 'Course'],
   ['results', 'Résultats'],
+  ['standings', 'Classements'],
   ['team', 'Équipe'],
   ['car', 'Voiture'],
   ['calendar', 'Calendrier'],
@@ -63,6 +65,11 @@ function escapeHtml(value) { return String(value).replaceAll('&', '&amp;').repla
 function seedFrom(value) { return String(value).split('').reduce((total, char) => ((total * 31) + char.charCodeAt(0)) >>> 0, 2166136261); }
 function createRandom(seed) { let state = seed || 1; return () => { state = (state * 1664525 + 1013904223) >>> 0; return state / 4294967296; }; }
 function formatDelta(value) { if (value <= 0) return 'Leader'; return `+${value.toFixed(1)}s`; }
+function positionClass(index) { return index < 3 ? `podium podium-${index + 1}` : ''; }
+function renderTable(headers, rows, emptyText = '') {
+  if (!rows.length) return emptyText ? `<div class="empty-state">${escapeHtml(emptyText)}</div>` : '';
+  return `<table><thead><tr>${headers.map((header) => `<th>${escapeHtml(header)}</th>`).join('')}</tr></thead><tbody>${rows.join('')}</tbody></table>`;
+}
 function issueLabel(entry, lap, totalLaps) {
   if (/accident|collision|spun|crash/i.test(entry.status)) return 'Accident';
   if (/engine|gearbox|transmission|hydraulics|electrical|brake|clutch|fuel|oil|power|turbo|overheating/i.test(entry.status)) return 'Problème';
@@ -97,6 +104,28 @@ async function fetchSeason(year) {
   season.constructors = constructorsData.MRData.ConstructorTable.Constructors.map((constructor, index) => ({ id: constructor.constructorId, name: constructor.name, nationality: constructor.nationality, strength: 55 + ((constructor.constructorId.length * 7 + index + year) % 36) })).sort((a, b) => a.name.localeCompare(b.name));
   season.races = racesData.MRData.RaceTable.Races.map((race) => ({ round: Number(race.round), name: race.raceName, circuit: race.Circuit.circuitName, locality: race.Circuit.Location.locality, country: race.Circuit.Location.country, date: race.date }));
   return season;
+}
+
+async function fetchStandings(year, round) {
+  const key = `${year}-${round}`;
+  if (standingsCache.has(key)) return standingsCache.get(key);
+  if (!round) return { drivers: [], constructors: [] };
+  const [driverResponse, constructorResponse] = await Promise.all([
+    fetch(`${API_BASE_URL}/${year}/${round}/driverstandings.json?limit=2000`),
+    fetch(`${API_BASE_URL}/${year}/${round}/constructorstandings.json?limit=2000`),
+  ]);
+  if (!driverResponse.ok || !constructorResponse.ok) throw new Error(`${driverResponse.status}/${constructorResponse.status}`);
+  const [driverData, constructorData] = await Promise.all([driverResponse.json(), constructorResponse.json()]);
+  const drivers = (driverData.MRData.StandingsTable.StandingsLists[0]?.DriverStandings ?? []).map((standing) => ({
+    position: Number(standing.position), points: Number(standing.points), wins: Number(standing.wins),
+    driver: `${standing.Driver.givenName} ${standing.Driver.familyName}`, constructor: standing.Constructors.map((constructor) => constructor.name).join(', '),
+  }));
+  const constructors = (constructorData.MRData.StandingsTable.StandingsLists[0]?.ConstructorStandings ?? []).map((standing) => ({
+    position: Number(standing.position), points: Number(standing.points), wins: Number(standing.wins), constructor: standing.Constructor.name, nationality: standing.Constructor.nationality,
+  }));
+  const standings = { drivers, constructors };
+  standingsCache.set(key, standings);
+  return standings;
 }
 
 async function fetchRaceResults(year, round) {
@@ -145,13 +174,13 @@ function renderGame() {
   renderShell();
   const profile = profileForYear(game.year);
   const race = game.calendar[game.raceIndex] ?? game.calendar.at(-1);
-  const renders = { home: () => renderHome(profile, race), race: () => renderRace(race), results: renderResults, team: renderTeam, car: () => renderCar(profile), calendar: renderCalendar, finance: renderFinance };
+  const renders = { home: () => renderHome(profile, race), race: () => renderRace(race), results: renderResults, standings: renderStandings, team: renderTeam, car: () => renderCar(profile), calendar: renderCalendar, finance: renderFinance };
   workspace.innerHTML = renders[activePage]?.() ?? renders.home();
 }
 
 function renderHome(profile, race) {
   return `<section class="dashboard">
-    <article class="panel era-card"><h2>Décennie</h2><div class="era-preview">${profile.layout} · ${profile.powerUnit} · ${profile.aero}</div></article>
+    <article class="panel era-card"><h2>Décennie</h2><div class="era-preview"><span>${profile.layout}</span><span>${profile.powerUnit}</span><span>${profile.aero}</span></div></article>
     <article class="panel"><h2>Prochaine course</h2><div class="metrics">${metric('Grand Prix', race?.name ?? '')}${metric('Circuit', race?.circuit ?? '')}${metric('Date', race ? dateFormat.format(new Date(`${race.date}T12:00:00Z`)) : '')}</div></article>
     <article class="panel"><h2>Classement</h2><div class="metrics">${metric('Course', `${Math.min(game.raceIndex + 1, game.calendar.length)} / ${game.calendar.length}`)}${metric('Budget', money.format(game.finance.budget))}</div></article>
   </section>`;
@@ -169,13 +198,14 @@ function renderTeam() {
 function renderRace(race) {
   if (!race) return '<section class="panel"></section>';
   const replay = raceReplay?.round === race.round ? raceReplay : null;
-  const board = replay ? replay.live.map((entry, index) => `<tr class="${entry.issue ? 'race-issue' : ''}"><td>${index + 1}</td><td>${escapeHtml(entry.driver)}</td><td>${escapeHtml(entry.constructor)}</td><td>${entry.delta}</td><td>${entry.lastLap}</td><td>${escapeHtml(entry.issue)}</td></tr>`).join('') : '';
+  const board = replay ? replay.live.map((entry, index) => `<tr class="${entry.issue ? 'race-issue' : ''} ${positionClass(index)}"><td>${index + 1}</td><td>${escapeHtml(entry.driver)}</td><td>${escapeHtml(entry.constructor)}</td><td>${entry.delta}</td><td>${entry.lastLap}</td><td>${escapeHtml(entry.issue)}</td></tr>`).join('') : '';
   const events = replay ? replay.events.slice(-MAX_RACE_EVENTS).map((event) => `<li>${event.lap}/${replay.totalLaps} · ${escapeHtml(event.text)}</li>`).join('') : '';
-  return `<section class="race-grid"><article class="panel"><h2>${escapeHtml(race.name)}</h2><div class="metrics">${metric('Circuit', race.circuit)}${metric('Lieu', `${race.locality}, ${race.country}`)}${metric('Date', dateFormat.format(new Date(`${race.date}T12:00:00Z`)))}${metric('Tours', replay ? replay.totalLaps : '')}${metric('Tour', replay ? `${replay.currentLap} / ${replay.totalLaps}` : '')}</div><div class="actions race-controls"><button type="button" data-live="start">Départ</button><button type="button" data-live="pause">Pause</button><button type="button" data-live="speed">x${raceSpeed}</button><button type="button" id="next-race">Valider</button></div></article><article class="panel"><h2>Week-end</h2><ol>${weekendSessions(game.year, race).map(([name, date]) => `<li>${name} — ${date}</li>`).join('')}</ol></article><article class="panel live-panel"><h2>Temps réel</h2><progress max="100" value="${replay?.progress ?? 0}"></progress><table><thead><tr><th>P</th><th>Pilote</th><th>Écurie</th><th>Delta</th><th>Tour</th><th>Problème</th></tr></thead><tbody>${board}</tbody></table></article><article class="panel events-panel"><h2>Événements</h2><ol>${events}</ol></article></section>`;
+  return `<section class="race-grid"><article class="panel"><h2>${escapeHtml(race.name)}</h2><div class="metrics">${metric('Circuit', race.circuit)}${metric('Lieu', `${race.locality}, ${race.country}`)}${metric('Date', dateFormat.format(new Date(`${race.date}T12:00:00Z`)))}${metric('Tours', replay ? replay.totalLaps : '')}${metric('Tour', replay ? `${replay.currentLap} / ${replay.totalLaps}` : '')}</div><div class="actions race-controls"><button type="button" data-live="start">Départ</button><button type="button" data-live="pause">Pause</button><button type="button" data-live="speed">x${raceSpeed}</button><button type="button" id="next-race">Valider</button></div></article><article class="panel"><h2>Week-end</h2><ol>${weekendSessions(game.year, race).map(([name, date]) => `<li>${name} — ${date}</li>`).join('')}</ol></article><article class="panel live-panel"><h2>Temps réel</h2><progress max="100" value="${replay?.progress ?? 0}"></progress>${renderTable(['P', 'Pilote', 'Écurie', 'Delta', 'Tour', 'Problème'], board ? [board] : [], '')}</article><article class="panel events-panel"><h2>Événements</h2><ol>${events}</ol></article></section>`;
 }
 
 function renderCalendar() { return `<article class="panel calendar-panel"><h2>Calendrier</h2><ol>${game.calendar.map((race, index) => `<li class="${index < game.raceIndex ? 'done' : index === game.raceIndex ? 'current' : ''}">${race.round}. ${escapeHtml(race.name)} — ${escapeHtml(race.circuit)}</li>`).join('')}</ol></article>`; }
 function renderResults() { return `<article class="panel"><h2>Résultats</h2><div id="results-table"></div></article>`; }
+function renderStandings() { return `<section class="standings-grid"><article class="panel"><h2>Pilotes</h2><div id="driver-standings"></div></article><article class="panel"><h2>Constructeurs</h2><div id="constructor-standings"></div></article></section>`; }
 function renderFinance() { return `<section class="dashboard"><article class="panel finance-panel"><h2>Finances</h2><div class="metrics">${metric('Revenus', money.format(game.finance.income))}${metric('Dépenses', money.format(game.finance.expenses))}${metric('Budget', money.format(game.finance.budget))}</div><button id="next-season" type="button">Saison suivante</button><button id="restart-game" type="button">Recommencer</button></article></section>`; }
 function action(label, dataName, key) { return `<button type="button" data-${dataName}="${key}">${label} · ${money.format(1_000_000)}</button>`; }
 
@@ -188,8 +218,26 @@ async function renderResultsTable() {
   container.innerHTML = '<div class="status">Chargement</div>';
   try {
     const results = await fetchRaceResults(game.year, race.round);
-    container.innerHTML = `<h3>${escapeHtml(race.name)}</h3><table><thead><tr><th>P</th><th>Pilote</th><th>Écurie</th><th>Tours</th><th>Statut</th><th>Pts</th></tr></thead><tbody>${results.map((r) => `<tr><td>${r.position}</td><td>${escapeHtml(r.driver)}</td><td>${escapeHtml(r.constructor)}</td><td>${r.laps}</td><td>${escapeHtml(r.status)}</td><td>${r.points}</td></tr>`).join('')}</tbody></table>`;
+    const rows = results.map((r, index) => `<tr class="${positionClass(index)}"><td>${r.position}</td><td>${escapeHtml(r.driver)}</td><td>${escapeHtml(r.constructor)}</td><td>${r.laps}</td><td>${escapeHtml(r.status)}</td><td>${r.points}</td></tr>`);
+    container.innerHTML = `<h3>${escapeHtml(race.name)}</h3>${renderTable(['P', 'Pilote', 'Écurie', 'Tours', 'Statut', 'Pts'], rows)}`;
   } catch { container.textContent = 'Erreur'; }
+}
+
+async function renderStandingsTables() {
+  const driverContainer = document.querySelector('#driver-standings');
+  const constructorContainer = document.querySelector('#constructor-standings');
+  if (!driverContainer || !constructorContainer || !game) return;
+  const round = game.raceIndex;
+  if (!round) { driverContainer.textContent = ''; constructorContainer.textContent = ''; return; }
+  driverContainer.innerHTML = '<div class="status">Chargement</div>';
+  constructorContainer.innerHTML = '<div class="status">Chargement</div>';
+  try {
+    const standings = await fetchStandings(game.year, round);
+    const driverRows = standings.drivers.map((standing, index) => `<tr class="${positionClass(index)}"><td>${standing.position}</td><td>${escapeHtml(standing.driver)}</td><td>${escapeHtml(standing.constructor)}</td><td>${standing.wins}</td><td>${standing.points}</td></tr>`);
+    const constructorRows = standings.constructors.map((standing, index) => `<tr class="${positionClass(index)}"><td>${standing.position}</td><td>${escapeHtml(standing.constructor)}</td><td>${escapeHtml(standing.nationality)}</td><td>${standing.wins}</td><td>${standing.points}</td></tr>`);
+    driverContainer.innerHTML = renderTable(['P', 'Pilote', 'Écurie', 'V', 'Pts'], driverRows);
+    constructorContainer.innerHTML = renderTable(['P', 'Constructeur', 'Pays', 'V', 'Pts'], constructorRows);
+  } catch { driverContainer.textContent = 'Erreur'; constructorContainer.textContent = 'Erreur'; }
 }
 
 function spend(amount) { if (game.finance.budget < amount) return false; game.finance.budget -= amount; game.finance.expenses += amount; return true; }
@@ -325,7 +373,7 @@ setupForm.addEventListener('submit', (event) => { event.preventDefault(); startG
 document.addEventListener('click', (event) => {
   const target = event.target;
   if (!(target instanceof HTMLButtonElement)) return;
-  if (target.dataset.page) { activePage = target.dataset.page; renderGame(); if (activePage === 'results') renderResultsTable(); return; }
+  if (target.dataset.page) { activePage = target.dataset.page; renderGame(); if (activePage === 'results') renderResultsTable(); if (activePage === 'standings') renderStandingsTables(); return; }
   if (!game) return;
   if (target.dataset.car) developCar(target.dataset.car);
   if (target.dataset.facility) upgradeFacility(target.dataset.facility);
