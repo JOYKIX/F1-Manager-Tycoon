@@ -8,41 +8,98 @@
   </head>
   <body>
     <main class="app">
-      <header class="toolbar">
+      <header class="topbar">
         <h1>F1 Manager Tycoon</h1>
-        <label>
-          Saison
-          <select id="season-select"></select>
-        </label>
+        <div class="status" id="save-status" aria-live="polite"></div>
       </header>
 
-      <section class="grid" aria-live="polite">
-        <article>
-          <h2>Pilotes</h2>
-          <table>
-            <thead>
-              <tr>
-                <th>Nom</th>
-                <th>Nationalité</th>
-                <th>Naissance</th>
-              </tr>
-            </thead>
-            <tbody id="drivers-body"></tbody>
-          </table>
-        </article>
+      <section class="panel setup" id="setup-panel">
+        <form id="setup-form" class="setup-grid">
+          <label>
+            Année de départ
+            <select id="season-select" name="season"></select>
+          </label>
 
-        <article>
-          <h2>Écuries</h2>
-          <table>
-            <thead>
-              <tr>
-                <th>Nom</th>
-                <th>Nationalité</th>
-              </tr>
-            </thead>
-            <tbody id="constructors-body"></tbody>
-          </table>
-        </article>
+          <label>
+            Écurie
+            <select id="team-select" name="team" disabled></select>
+          </label>
+
+          <label>
+            Prénom
+            <input id="first-name" name="firstName" autocomplete="given-name" required />
+          </label>
+
+          <label>
+            Nom
+            <input id="last-name" name="lastName" autocomplete="family-name" required />
+          </label>
+
+          <label>
+            Date de naissance
+            <input id="birth-date" name="birthDate" type="date" required />
+          </label>
+
+          <button type="submit">Commencer</button>
+        </form>
+      </section>
+
+      <section class="game hidden" id="game-panel">
+        <aside class="panel manager-card">
+          <h2 id="manager-name"></h2>
+          <dl>
+            <div><dt>Âge</dt><dd id="manager-age"></dd></div>
+            <div><dt>Espérance de vie</dt><dd id="manager-life"></dd></div>
+            <div><dt>Saison</dt><dd id="current-season"></dd></div>
+            <div><dt>Écurie</dt><dd id="current-team"></dd></div>
+            <div><dt>Budget</dt><dd id="budget"></dd></div>
+          </dl>
+        </aside>
+
+        <section class="dashboard">
+          <article class="panel era-card">
+            <h2>Décennie</h2>
+            <div class="era-preview" id="era-preview"></div>
+          </article>
+
+          <article class="panel">
+            <h2>Voiture</h2>
+            <div class="car-stage" id="car-stage"></div>
+            <div class="metrics" id="car-metrics"></div>
+          </article>
+
+          <article class="panel">
+            <h2>Développement</h2>
+            <div class="actions" id="development-actions"></div>
+          </article>
+
+          <article class="panel">
+            <h2>Pilotes</h2>
+            <div class="drivers" id="drivers-list"></div>
+          </article>
+
+          <article class="panel">
+            <h2>Équipe</h2>
+            <div class="metrics" id="team-metrics"></div>
+          </article>
+
+          <article class="panel">
+            <h2>Infrastructures</h2>
+            <div class="actions" id="facility-actions"></div>
+          </article>
+
+          <article class="panel calendar-panel">
+            <h2>Calendrier</h2>
+            <ol id="calendar-list"></ol>
+          </article>
+
+          <article class="panel finance-panel">
+            <h2>Finances</h2>
+            <div class="metrics" id="finance-metrics"></div>
+            <button id="next-race" type="button">Course suivante</button>
+            <button id="next-season" type="button">Saison suivante</button>
+          </article>
+        </section>
       </section>
     </main>
     <script type="module" src="src/main.js"></script>
