@@ -148,3 +148,135 @@ li.done { opacity: .45; }
   .events-panel { grid-column: auto; }
   .calendar-panel { grid-column: auto; }
 }
+
+.topbar h1 {
+  text-shadow: 0 18px 48px color-mix(in srgb, var(--accent) 38%, transparent);
+}
+
+.panel {
+  position: relative;
+}
+
+.panel::before {
+  background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--accent) 52%, transparent), transparent);
+  content: '';
+  height: 1px;
+  left: 18px;
+  opacity: .75;
+  position: absolute;
+  right: 18px;
+  top: 0;
+}
+
+.setup {
+  margin-inline: auto;
+  max-width: 1180px;
+}
+
+.manager-card {
+  align-self: start;
+  position: sticky;
+  top: 22px;
+}
+
+.manager-card h2 {
+  color: white;
+  font-size: 1.25rem;
+  line-height: 1.1;
+  overflow-wrap: anywhere;
+}
+
+.page-nav button,
+.actions button,
+.driver-card button,
+.finance-panel button,
+.race-controls button {
+  transition: background .18s ease, border-color .18s ease, box-shadow .18s ease, transform .18s ease;
+}
+
+.page-nav button:hover,
+.actions button:hover,
+.driver-card button:hover,
+.finance-panel button:hover,
+.race-controls button:hover {
+  box-shadow: 0 14px 30px color-mix(in srgb, var(--accent) 24%, transparent);
+  transform: translateY(-1px);
+}
+
+.standings-grid {
+  display: grid;
+  gap: 18px;
+  grid-template-columns: repeat(2, minmax(280px, 1fr));
+}
+
+.era-card {
+  background:
+    radial-gradient(circle at 18% 20%, color-mix(in srgb, var(--accent) 34%, transparent), transparent 32%),
+    linear-gradient(180deg, rgba(255,255,255,.1), rgba(255,255,255,.035));
+}
+
+.era-preview {
+  align-content: center;
+  display: grid;
+  gap: 10px;
+}
+
+.era-preview span {
+  display: block;
+}
+
+.car-panel {
+  grid-column: span 2;
+}
+
+.car-stage {
+  background:
+    linear-gradient(90deg, transparent, rgba(255,255,255,.08), transparent),
+    radial-gradient(ellipse at center, color-mix(in srgb, var(--accent) 18%, transparent), transparent 62%);
+  border-radius: 18px;
+  margin-top: 16px;
+  overflow: hidden;
+}
+
+.car-shape {
+  filter: drop-shadow(0 18px 28px color-mix(in srgb, var(--accent) 35%, transparent));
+}
+
+.driver-card {
+  border: 1px solid rgba(255,255,255,.08);
+}
+
+progress {
+  block-size: 10px;
+  border-radius: 999px;
+  overflow: hidden;
+}
+
+progress::-webkit-progress-bar { background: rgba(255,255,255,.12); }
+progress::-webkit-progress-value { background: var(--accent); }
+
+.podium-1 td:first-child { color: #ffd54f; font-weight: 900; }
+.podium-2 td:first-child { color: #d7dde8; font-weight: 900; }
+.podium-3 td:first-child { color: #d79b64; font-weight: 900; }
+
+tr:hover td {
+  background: rgba(255,255,255,.045);
+}
+
+.empty-state {
+  min-height: 120px;
+}
+
+@media (max-width: 1000px) {
+  .manager-card { position: static; }
+  .standings-grid { grid-template-columns: 1fr; }
+  .car-panel { grid-column: auto; }
+}
+
+@media (max-width: 640px) {
+  .app { padding: 12px; }
+  .topbar { align-items: start; flex-direction: column; }
+  .panel { border-radius: 18px; padding: 14px; }
+  .race-controls { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  th, td { padding: 8px 6px; }
+}
