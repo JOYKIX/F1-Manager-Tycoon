@@ -19,8 +19,6 @@ const pageNav = document.querySelector('#page-nav');
 const money = new Intl.NumberFormat('fr-FR', { style: 'currency', currency: 'EUR', maximumFractionDigits: 0 });
 const dateFormat = new Intl.DateTimeFormat('fr-FR', { day: '2-digit', month: 'short', year: 'numeric' });
 const cache = new Map();
-const raceResultCache = new Map();
-const standingsCache = new Map();
 let game = null;
 let activePage = 'home';
 let raceTimer = null;
@@ -58,6 +56,9 @@ function maxBirthDate(year) { return `${year - MIN_MANAGER_AGE}-12-31`; }
 function lifeExpectancy(firstName, lastName, birthDate) { return 72 + (`${firstName}${lastName}${birthDate}`.split('').reduce((total, char) => total + char.charCodeAt(0), 0) % 24); }
 function baseBudget(year, teamCount) { return Math.round((8_000_000 + teamCount * 650_000) * (1 + ((year - START_YEAR) / 45))); }
 function createSeasonShell(year) { return { year, constructors: [], drivers: [], races: [], constructorDrivers: new Map() }; }
+function pointsForPosition(position) { return [25, 18, 15, 12, 10, 8, 6, 4, 2, 1][position - 1] ?? 0; }
+function teamCarStats(team) { const base = team.strength ?? 60; return { chassis: base, aero: base, engine: base, reliability: 70 }; }
+function carAverage(car) { return (car.chassis + car.aero + car.engine + car.reliability) / 4; }
 function saveGame() { localStorage.setItem(SAVE_KEY, JSON.stringify(game)); setStatus('Sauvegardé'); }
 function loadSavedGame() { const saved = localStorage.getItem(SAVE_KEY); if (!saved) return null; try { return JSON.parse(saved); } catch { return null; } }
 function metric(label, value) { return `<div><span>${label}</span><strong>${value}</strong></div>`; }
@@ -106,45 +107,68 @@ async function fetchSeason(year) {
   return season;
 }
 
-async function fetchStandings(year, round) {
-  const key = `${year}-${round}`;
-  if (standingsCache.has(key)) return standingsCache.get(key);
-  if (!round) return { drivers: [], constructors: [] };
-  const [driverResponse, constructorResponse] = await Promise.all([
-    fetch(`${API_BASE_URL}/${year}/${round}/driverstandings.json?limit=2000`),
-    fetch(`${API_BASE_URL}/${year}/${round}/constructorstandings.json?limit=2000`),
-  ]);
-  if (!driverResponse.ok || !constructorResponse.ok) throw new Error(`${driverResponse.status}/${constructorResponse.status}`);
-  const [driverData, constructorData] = await Promise.all([driverResponse.json(), constructorResponse.json()]);
-  const drivers = (driverData.MRData.StandingsTable.StandingsLists[0]?.DriverStandings ?? []).map((standing) => ({
-    position: Number(standing.position), points: Number(standing.points), wins: Number(standing.wins),
-    driver: `${standing.Driver.givenName} ${standing.Driver.familyName}`, constructor: standing.Constructors.map((constructor) => constructor.name).join(', '),
+async function driversForTeam(year, teamId) { const season = await fetchSeason(year); if (!season.constructorDrivers.has(teamId)) season.constructorDrivers.set(teamId, await fetchConstructorDrivers(year, teamId)); return season.constructorDrivers.get(teamId); }
+async function buildEntrants(year, constructors, playerTeamId, playerDrivers) {
+  const pairs = await Promise.all(constructors.map(async (team) => {
+    const drivers = team.id === playerTeamId ? playerDrivers : await driversForTeam(year, team.id);
+    return drivers.slice(0, 2).map((driver) => ({ driver, team, car: teamCarStats(team) }));
   }));
-  const constructors = (constructorData.MRData.StandingsTable.StandingsLists[0]?.ConstructorStandings ?? []).map((standing) => ({
-    position: Number(standing.position), points: Number(standing.points), wins: Number(standing.wins), constructor: standing.Constructor.name, nationality: standing.Constructor.nationality,
-  }));
-  const standings = { drivers, constructors };
-  standingsCache.set(key, standings);
-  return standings;
+  return pairs.flat();
+}
+function seasonStandings() {
+  const driverRows = new Map();
+  const constructorRows = new Map();
+  for (const result of Object.values(game.results ?? {})) {
+    for (const row of result) {
+      const driver = driverRows.get(row.driverId) ?? { driver: row.driver, constructor: row.constructor, points: 0, wins: 0 };
+      const constructor = constructorRows.get(row.constructorId) ?? { constructor: row.constructor, nationality: row.nationality, points: 0, wins: 0 };
+      driver.points += row.points;
+      constructor.points += row.points;
+      if (row.position === 1) { driver.wins += 1; constructor.wins += 1; }
+      driverRows.set(row.driverId, driver);
+      constructorRows.set(row.constructorId, constructor);
+    }
+  }
+  const sortRows = (a, b) => b.points - a.points || b.wins - a.wins || a.driver?.localeCompare(b.driver) || a.constructor?.localeCompare(b.constructor);
+  return {
+    drivers: [...driverRows.values()].sort(sortRows).map((row, index) => ({ ...row, position: index + 1 })),
+    constructors: [...constructorRows.values()].sort(sortRows).map((row, index) => ({ ...row, position: index + 1 })),
+  };
 }
 
-async function fetchRaceResults(year, round) {
-  const key = `${year}-${round}`;
-  if (raceResultCache.has(key)) return raceResultCache.get(key);
-  const response = await fetch(`${API_BASE_URL}/${year}/${round}/results.json?limit=2000`);
-  if (!response.ok) throw new Error(`${response.status}`);
-  const data = await response.json();
-  const race = data.MRData.RaceTable.Races[0];
-  const results = (race?.Results ?? []).map((result) => ({
-    position: Number(result.positionOrder), number: result.number, grid: result.grid, laps: result.laps, status: result.status,
-    time: result.Time?.time ?? '', driverId: result.Driver.driverId, driver: `${result.Driver.givenName} ${result.Driver.familyName}`,
-    constructorId: result.Constructor.constructorId, constructor: result.Constructor.name, points: Number(result.points),
-  })).sort((a, b) => a.position - b.position);
-  raceResultCache.set(key, results);
+function simulateRaceResults(race) {
+  if (game.results?.[race.round]) return game.results[race.round];
+  const random = createRandom(seedFrom(`${game.year}-${race.round}-${game.team.id}-${game.car.chassis}-${game.car.aero}-${game.car.engine}-${game.car.reliability}`));
+  const totalLaps = 50 + (seedFrom(`${race.name}-${race.circuit}`) % 26);
+  const rows = game.entrants.map((entry) => {
+    const isPlayerTeam = entry.team.id === game.team.id;
+    const car = isPlayerTeam ? game.car : entry.car;
+    const driverRating = entry.driver.rating;
+    const carScore = carAverage(car);
+    const staffScore = isPlayerTeam ? ((game.staff.strategy + game.staff.pitStop) / 2) : entry.team.strength;
+    const reliability = car.reliability;
+    const incidentRoll = random();
+    const retired = incidentRoll > Math.min(.985, .86 + reliability / 850);
+    const laps = retired ? Math.max(1, Math.floor(totalLaps * (.35 + random() * .58))) : totalLaps;
+    const score = (driverRating * 1.15) + (carScore * 1.45) + (staffScore * .35) + ((random() - .5) * 28) - (retired ? 120 : 0);
+    return { entry, score, laps, retired };
+  }).sort((a, b) => b.score - a.score);
+  const results = rows.map((row, index) => ({
+    position: index + 1,
+    grid: Math.max(1, Math.round(index + 1 + ((random() - .5) * 8))),
+    laps: row.laps,
+    status: row.retired ? 'Abandon' : 'Terminé',
+    driverId: row.entry.driver.id,
+    driver: row.entry.driver.name,
+    constructorId: row.entry.team.id,
+    constructor: row.entry.team.name,
+    nationality: row.entry.team.nationality,
+    points: pointsForPosition(index + 1),
+  }));
+  game.results ??= {};
+  game.results[race.round] = results;
   return results;
 }
-
-async function driversForTeam(year, teamId) { const season = await fetchSeason(year); if (!season.constructorDrivers.has(teamId)) season.constructorDrivers.set(teamId, await fetchConstructorDrivers(year, teamId)); return season.constructorDrivers.get(teamId); }
 
 function weekendSessions(year, race) {
   const date = new Date(`${race.date}T12:00:00Z`);
@@ -206,47 +230,42 @@ function renderRace(race) {
 function renderCalendar() { return `<article class="panel calendar-panel"><h2>Calendrier</h2><ol>${game.calendar.map((race, index) => `<li class="${index < game.raceIndex ? 'done' : index === game.raceIndex ? 'current' : ''}">${race.round}. ${escapeHtml(race.name)} — ${escapeHtml(race.circuit)}</li>`).join('')}</ol></article>`; }
 function renderResults() { return `<article class="panel"><h2>Résultats</h2><div id="results-table"></div></article>`; }
 function renderStandings() { return `<section class="standings-grid"><article class="panel"><h2>Pilotes</h2><div id="driver-standings"></div></article><article class="panel"><h2>Constructeurs</h2><div id="constructor-standings"></div></article></section>`; }
-function renderFinance() { return `<section class="dashboard"><article class="panel finance-panel"><h2>Finances</h2><div class="metrics">${metric('Revenus', money.format(game.finance.income))}${metric('Dépenses', money.format(game.finance.expenses))}${metric('Budget', money.format(game.finance.budget))}</div><button id="next-season" type="button">Saison suivante</button><button id="restart-game" type="button">Recommencer</button></article></section>`; }
+function renderFinance() {
+  const seasonDone = game.raceIndex >= game.calendar.length;
+  const teams = (game.nextSeasonTeams ?? game.seasonTeams ?? []).map((team) => `<option value="${team.id}" ${team.id === game.team.id ? 'selected' : ''}>${escapeHtml(team.name)}</option>`).join('');
+  const next = seasonDone ? `<label>Écurie<select id="next-team-select">${teams}</select></label><button id="next-season" type="button">Saison suivante</button>` : '';
+  return `<section class="dashboard"><article class="panel finance-panel"><h2>Finances</h2><div class="metrics">${metric('Revenus', money.format(game.finance.income))}${metric('Dépenses', money.format(game.finance.expenses))}${metric('Budget', money.format(game.finance.budget))}</div>${next}<button id="restart-game" type="button">Recommencer</button></article></section>`;
+}
 function action(label, dataName, key) { return `<button type="button" data-${dataName}="${key}">${label} · ${money.format(1_000_000)}</button>`; }
 
-async function renderResultsTable() {
+function renderResultsTable() {
   const container = document.querySelector('#results-table');
   if (!container || !game) return;
   const completed = game.calendar.slice(0, game.raceIndex);
   if (!completed.length) { container.textContent = ''; return; }
   const race = completed.at(-1);
-  container.innerHTML = '<div class="status">Chargement</div>';
-  try {
-    const results = await fetchRaceResults(game.year, race.round);
-    const rows = results.map((r, index) => `<tr class="${positionClass(index)}"><td>${r.position}</td><td>${escapeHtml(r.driver)}</td><td>${escapeHtml(r.constructor)}</td><td>${r.laps}</td><td>${escapeHtml(r.status)}</td><td>${r.points}</td></tr>`);
-    container.innerHTML = `<h3>${escapeHtml(race.name)}</h3>${renderTable(['P', 'Pilote', 'Écurie', 'Tours', 'Statut', 'Pts'], rows)}`;
-  } catch { container.textContent = 'Erreur'; }
+  const results = game.results?.[race.round] ?? [];
+  const rows = results.map((r, index) => `<tr class="${positionClass(index)}"><td>${r.position}</td><td>${escapeHtml(r.driver)}</td><td>${escapeHtml(r.constructor)}</td><td>${r.laps}</td><td>${escapeHtml(r.status)}</td><td>${r.points}</td></tr>`);
+  container.innerHTML = `<h3>${escapeHtml(race.name)}</h3>${renderTable(['P', 'Pilote', 'Écurie', 'Tours', 'Statut', 'Pts'], rows)}`;
 }
-
-async function renderStandingsTables() {
+function renderStandingsTables() {
   const driverContainer = document.querySelector('#driver-standings');
   const constructorContainer = document.querySelector('#constructor-standings');
   if (!driverContainer || !constructorContainer || !game) return;
-  const round = game.raceIndex;
-  if (!round) { driverContainer.textContent = ''; constructorContainer.textContent = ''; return; }
-  driverContainer.innerHTML = '<div class="status">Chargement</div>';
-  constructorContainer.innerHTML = '<div class="status">Chargement</div>';
-  try {
-    const standings = await fetchStandings(game.year, round);
-    const driverRows = standings.drivers.map((standing, index) => `<tr class="${positionClass(index)}"><td>${standing.position}</td><td>${escapeHtml(standing.driver)}</td><td>${escapeHtml(standing.constructor)}</td><td>${standing.wins}</td><td>${standing.points}</td></tr>`);
-    const constructorRows = standings.constructors.map((standing, index) => `<tr class="${positionClass(index)}"><td>${standing.position}</td><td>${escapeHtml(standing.constructor)}</td><td>${escapeHtml(standing.nationality)}</td><td>${standing.wins}</td><td>${standing.points}</td></tr>`);
-    driverContainer.innerHTML = renderTable(['P', 'Pilote', 'Écurie', 'V', 'Pts'], driverRows);
-    constructorContainer.innerHTML = renderTable(['P', 'Constructeur', 'Pays', 'V', 'Pts'], constructorRows);
-  } catch { driverContainer.textContent = 'Erreur'; constructorContainer.textContent = 'Erreur'; }
+  if (!game.raceIndex) { driverContainer.textContent = ''; constructorContainer.textContent = ''; return; }
+  const standings = seasonStandings();
+  const driverRows = standings.drivers.map((standing, index) => `<tr class="${positionClass(index)}"><td>${standing.position}</td><td>${escapeHtml(standing.driver)}</td><td>${escapeHtml(standing.constructor)}</td><td>${standing.wins}</td><td>${standing.points}</td></tr>`);
+  const constructorRows = standings.constructors.map((standing, index) => `<tr class="${positionClass(index)}"><td>${standing.position}</td><td>${escapeHtml(standing.constructor)}</td><td>${escapeHtml(standing.nationality)}</td><td>${standing.wins}</td><td>${standing.points}</td></tr>`);
+  driverContainer.innerHTML = renderTable(['P', 'Pilote', 'Écurie', 'V', 'Pts'], driverRows);
+  constructorContainer.innerHTML = renderTable(['P', 'Constructeur', 'Pays', 'V', 'Pts'], constructorRows);
 }
-
 function spend(amount) { if (game.finance.budget < amount) return false; game.finance.budget -= amount; game.finance.expenses += amount; return true; }
 function developCar(key) { if (!spend(1_000_000)) return; game.car[key] = Math.min(100, game.car[key] + 3); saveGame(); renderGame(); }
 function upgradeFacility(key) { if (!spend(1_000_000)) return; game.facilities[key] += 1; game.staff.engineering = Math.min(100, game.staff.engineering + 1); saveGame(); renderGame(); }
 function developDriver(id) { if (!spend(500_000)) return; const driver = game.drivers.find((item) => item.id === id); driver.rating = Math.min(driver.potential, driver.rating + 2); saveGame(); renderGame(); }
 
 async function createReplay(race) {
-  const results = await fetchRaceResults(game.year, race.round);
+  const results = simulateRaceResults(race);
   const totalLaps = Math.max(...results.map((result) => Number(result.laps) || 0), 1);
   raceReplay = {
     round: race.round,
@@ -276,7 +295,7 @@ function updateRaceReplay() {
   raceReplay.live = raceReplay.live.map((entry) => {
     const target = entry.position * 3.2;
     const fluctuation = (random() - .5) * 2.4;
-    const issue = issueLabel(entry, nextLap, raceReplay.totalLaps);
+    const issue = entry.status === 'Abandon' && Number(entry.laps) < nextLap ? 'Abandon' : issueLabel(entry, nextLap, raceReplay.totalLaps);
     const lastLap = issue && Number(entry.laps) < nextLap ? '' : `1:${Math.max(8, entry.pace + fluctuation).toFixed(3)}`;
     const deltaValue = entry.position === 1 ? 0 : Math.max(0.1, (entry.deltaValue * .62) + (target * .38) + fluctuation);
     return { ...entry, issue, lastLap, deltaValue, delta: formatDelta(deltaValue) };
@@ -312,13 +331,19 @@ async function startLiveRace() {
 function pauseLiveRace() { clearInterval(raceTimer); raceTimer = null; }
 function changeRaceSpeed() { raceSpeed = raceSpeed === 1 ? 2 : raceSpeed === 2 ? 4 : raceSpeed === 4 ? 8 : 1; renderGame(); }
 
-function nextRace() {
+async function nextRace() {
   if (game.raceIndex >= game.calendar.length) return;
+  const race = game.calendar[game.raceIndex];
+  simulateRaceResults(race);
   const performance = game.car.chassis + game.car.aero + game.car.engine + game.car.reliability + game.staff.strategy + game.staff.pitStop;
   const income = Math.max(250_000, Math.round(performance * 15_000));
   game.finance.income += income;
   game.finance.budget += income;
   game.raceIndex += 1;
+  if (game.raceIndex >= game.calendar.length && game.year < END_YEAR) {
+    const nextSeasonData = await fetchSeason(game.year + 1);
+    game.nextSeasonTeams = nextSeasonData.constructors;
+  }
   raceReplay = null;
   pauseLiveRace();
   saveGame();
@@ -326,13 +351,20 @@ function nextRace() {
 }
 
 async function nextSeason() {
-  if (game.year >= END_YEAR) return;
+  if (game.year >= END_YEAR || game.raceIndex < game.calendar.length) return;
+  const nextTeamId = document.querySelector('#next-team-select')?.value ?? game.team.id;
   const season = await fetchSeason(game.year + 1);
+  const team = season.constructors.find((constructor) => constructor.id === nextTeamId) ?? season.constructors[0];
   game.year += 1;
+  game.team = team;
+  game.seasonTeams = season.constructors;
   game.calendar = season.races;
   game.raceIndex = 0;
   game.drivers = await driversForTeam(game.year, game.team.id);
-  game.car.reliability = Math.max(45, game.car.reliability - 8);
+  game.entrants = await buildEntrants(game.year, game.seasonTeams, game.team.id, game.drivers);
+  game.car = { ...teamCarStats(team), reliability: Math.max(45, Math.round(((game.car?.reliability ?? 70) + teamCarStats(team).reliability) / 2) - 8) };
+  game.results = {};
+  game.nextSeasonTeams = null;
   raceReplay = null;
   saveGame();
   renderGame();
@@ -355,7 +387,9 @@ async function startGame(formData) {
   const team = season.constructors.find((constructor) => constructor.id === formData.get('team'));
   const firstName = formData.get('firstName').toString().trim();
   const lastName = formData.get('lastName').toString().trim();
-  game = { year, manager: { firstName, lastName, birthDate, lifeExpectancy: lifeExpectancy(firstName, lastName, birthDate) }, team, drivers: await driversForTeam(year, team.id), calendar: season.races, raceIndex: 0, car: { chassis: team.strength, aero: team.strength, engine: team.strength, reliability: 70 }, staff: { engineering: 60, strategy: 60, pitStop: 60 }, facilities: { factory: 1, simulator: 1, windTunnel: 1 }, finance: { budget: baseBudget(year, season.constructors.length), income: 0, expenses: 0 } };
+  const drivers = await driversForTeam(year, team.id);
+  game = { year, manager: { firstName, lastName, birthDate, lifeExpectancy: lifeExpectancy(firstName, lastName, birthDate) }, team, seasonTeams: season.constructors, drivers, calendar: season.races, raceIndex: 0, car: teamCarStats(team), staff: { engineering: 60, strategy: 60, pitStop: 60 }, facilities: { factory: 1, simulator: 1, windTunnel: 1 }, finance: { budget: baseBudget(year, season.constructors.length), income: 0, expenses: 0 }, results: {} };
+  game.entrants = await buildEntrants(year, season.constructors, team.id, drivers);
   setupPanel.classList.add('hidden');
   gamePanel.classList.remove('hidden');
   saveGame();
@@ -387,5 +421,5 @@ document.addEventListener('click', (event) => {
 });
 
 const savedGame = loadSavedGame();
-if (savedGame) { game = savedGame; setupPanel.classList.add('hidden'); gamePanel.classList.remove('hidden'); renderGame(); }
+if (savedGame) { game = savedGame; game.results ??= {}; game.seasonTeams ??= [game.team]; game.entrants ??= game.drivers.map((driver) => ({ driver, team: game.team, car: game.car })); setupPanel.classList.add('hidden'); gamePanel.classList.remove('hidden'); renderGame(); }
 else { setStatus(''); }
