@@ -11,6 +11,7 @@ const setupPanel = document.querySelector('#setup-panel');
 const gamePanel = document.querySelector('#game-panel');
 const saveStatus = document.querySelector('#save-status');
 const birthDateInput = document.querySelector('#birth-date');
+const restartButton = document.querySelector('#restart-game');
 
 const money = new Intl.NumberFormat('fr-FR', { style: 'currency', currency: 'EUR', maximumFractionDigits: 0 });
 const cache = new Map();
@@ -57,13 +58,33 @@ function baseBudget(year, teamCount) {
 }
 
 function createSeasonShell(year) {
-  return { year, constructors: [], drivers: [], races: [] };
+  return { year, constructors: [], drivers: [], races: [], constructorDrivers: new Map() };
 }
 
 async function fetchTable(year, tableName) {
   const response = await fetch(`${API_BASE_URL}/${year}/${tableName}.json?limit=2000`);
   if (!response.ok) throw new Error(`${response.status}`);
   return response.json();
+}
+
+function mapDriver(driver, year) {
+  return {
+    id: driver.driverId,
+    code: driver.code ?? '',
+    name: `${driver.givenName} ${driver.familyName}`,
+    dateOfBirth: driver.dateOfBirth,
+    nationality: driver.nationality,
+    rating: 60 + ((driver.driverId.length + year) % 31),
+    potential: 65 + ((driver.familyName.length + year) % 31),
+  };
+}
+
+async function fetchConstructorDrivers(year, constructorId) {
+  const response = await fetch(`${API_BASE_URL}/${year}/constructors/${constructorId}/drivers.json?limit=2000`);
+  if (!response.ok) throw new Error(`${response.status}`);
+  const data = await response.json();
+  return data.MRData.DriverTable.Drivers.map((driver) => mapDriver(driver, year))
+    .sort((a, b) => a.name.localeCompare(b.name));
 }
 
 async function fetchSeason(year) {
@@ -78,15 +99,8 @@ async function fetchSeason(year) {
     fetchTable(year, 'races'),
   ]);
 
-  season.drivers = driversData.MRData.DriverTable.Drivers.map((driver) => ({
-    id: driver.driverId,
-    code: driver.code ?? '',
-    name: `${driver.givenName} ${driver.familyName}`,
-    dateOfBirth: driver.dateOfBirth,
-    nationality: driver.nationality,
-    rating: 60 + ((driver.driverId.length + year) % 31),
-    potential: 65 + ((driver.familyName.length + year) % 31),
-  })).sort((a, b) => a.name.localeCompare(b.name));
+  season.drivers = driversData.MRData.DriverTable.Drivers.map((driver) => mapDriver(driver, year))
+    .sort((a, b) => a.name.localeCompare(b.name));
 
   season.constructors = constructorsData.MRData.ConstructorTable.Constructors.map((constructor, index) => ({
     id: constructor.constructorId,
@@ -105,6 +119,14 @@ async function fetchSeason(year) {
   }));
 
   return season;
+}
+
+async function driversForTeam(year, teamId) {
+  const season = await fetchSeason(year);
+  if (!season.constructorDrivers.has(teamId)) {
+    season.constructorDrivers.set(teamId, await fetchConstructorDrivers(year, teamId));
+  }
+  return season.constructorDrivers.get(teamId);
 }
 
 function saveGame() {
@@ -221,10 +243,18 @@ async function nextSeason() {
   game.year += 1;
   game.calendar = season.races;
   game.raceIndex = 0;
-  game.drivers = season.drivers.slice(0, 2);
+  game.drivers = await driversForTeam(game.year, game.team.id);
   game.car.reliability = Math.max(45, game.car.reliability - 8);
   saveGame();
   renderGame();
+}
+
+function restartGame() {
+  game = null;
+  localStorage.removeItem(SAVE_KEY);
+  gamePanel.classList.add('hidden');
+  setupPanel.classList.remove('hidden');
+  setStatus('');
 }
 
 async function populateTeams(year) {
@@ -253,7 +283,7 @@ async function startGame(formData) {
     year,
     manager: { firstName, lastName, birthDate, lifeExpectancy: lifeExpectancy(firstName, lastName, birthDate) },
     team,
-    drivers: season.drivers.slice(0, 2),
+    drivers: await driversForTeam(year, team.id),
     calendar: season.races,
     raceIndex: 0,
     car: { chassis: team.strength, aero: team.strength, engine: team.strength, reliability: 70 },
@@ -294,6 +324,7 @@ document.addEventListener('click', (event) => {
 
 document.querySelector('#next-race').addEventListener('click', nextRace);
 document.querySelector('#next-season').addEventListener('click', nextSeason);
+restartButton.addEventListener('click', restartGame);
 
 const savedGame = loadSavedGame();
 if (savedGame) {
