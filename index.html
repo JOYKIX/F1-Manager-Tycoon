@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="fr">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>F1 Manager Tycoon</title>
+    <link rel="stylesheet" href="src/styles.css" />
+  </head>
+  <body>
+    <main class="app">
+      <header class="toolbar">
+        <h1>F1 Manager Tycoon</h1>
+        <label>
+          Saison
+          <select id="season-select"></select>
+        </label>
+      </header>
+
+      <section class="grid" aria-live="polite">
+        <article>
+          <h2>Pilotes</h2>
+          <table>
+            <thead>
+              <tr>
+                <th>Nom</th>
+                <th>Nationalité</th>
+                <th>Naissance</th>
+              </tr>
+            </thead>
+            <tbody id="drivers-body"></tbody>
+          </table>
+        </article>
+
+        <article>
+          <h2>Écuries</h2>
+          <table>
+            <thead>
+              <tr>
+                <th>Nom</th>
+                <th>Nationalité</th>
+              </tr>
+            </thead>
+            <tbody id="constructors-body"></tbody>
+          </table>
+        </article>
+      </section>
+    </main>
+    <script type="module" src="src/main.js"></script>
+  </body>
+</html>
