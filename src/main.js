@@ -4,6 +4,7 @@ const MIN_MANAGER_AGE = 18;
 const API_BASE_URL = 'https://api.jolpi.ca/ergast/f1';
 const SAVE_KEY = 'f1-manager-tycoon-save';
 const RACE_TICK_MS = 900;
+const MAX_RACE_EVENTS = 8;
 
 const seasonSelect = document.querySelector('#season-select');
 const teamSelect = document.querySelector('#team-select');
@@ -59,6 +60,16 @@ function saveGame() { localStorage.setItem(SAVE_KEY, JSON.stringify(game)); setS
 function loadSavedGame() { const saved = localStorage.getItem(SAVE_KEY); if (!saved) return null; try { return JSON.parse(saved); } catch { return null; } }
 function metric(label, value) { return `<div><span>${label}</span><strong>${value}</strong></div>`; }
 function escapeHtml(value) { return String(value).replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;'); }
+function seedFrom(value) { return String(value).split('').reduce((total, char) => ((total * 31) + char.charCodeAt(0)) >>> 0, 2166136261); }
+function createRandom(seed) { let state = seed || 1; return () => { state = (state * 1664525 + 1013904223) >>> 0; return state / 4294967296; }; }
+function formatDelta(value) { if (value <= 0) return 'Leader'; return `+${value.toFixed(1)}s`; }
+function issueLabel(entry, lap, totalLaps) {
+  if (/accident|collision|spun|crash/i.test(entry.status)) return 'Accident';
+  if (/engine|gearbox|transmission|hydraulics|electrical|brake|clutch|fuel|oil|power|turbo|overheating/i.test(entry.status)) return 'Problème';
+  if (!/finished|\+\d+ lap|lap/i.test(entry.status) && Number(entry.laps) < totalLaps) return entry.status;
+  if (lap > Math.max(2, Math.round(totalLaps * .15)) && Number(entry.laps) < lap) return 'Abandon';
+  return '';
+}
 
 async function fetchTable(year, tableName) {
   const response = await fetch(`${API_BASE_URL}/${year}/${tableName}.json?limit=2000`);
@@ -158,8 +169,9 @@ function renderTeam() {
 function renderRace(race) {
   if (!race) return '<section class="panel"></section>';
   const replay = raceReplay?.round === race.round ? raceReplay : null;
-  const board = replay ? replay.live.map((entry, index) => `<tr><td>${index + 1}</td><td>${escapeHtml(entry.driver)}</td><td>${escapeHtml(entry.constructor)}</td><td>${entry.gap}</td></tr>`).join('') : '';
-  return `<section class="race-grid"><article class="panel"><h2>${escapeHtml(race.name)}</h2><div class="metrics">${metric('Circuit', race.circuit)}${metric('Lieu', `${race.locality}, ${race.country}`)}${metric('Date', dateFormat.format(new Date(`${race.date}T12:00:00Z`)))}</div><div class="actions race-controls"><button type="button" data-live="start">Départ</button><button type="button" data-live="pause">Pause</button><button type="button" data-live="speed">x${raceSpeed}</button><button type="button" id="next-race">Valider</button></div></article><article class="panel"><h2>Week-end</h2><ol>${weekendSessions(game.year, race).map(([name, date]) => `<li>${name} — ${date}</li>`).join('')}</ol></article><article class="panel live-panel"><h2>Temps réel</h2><progress max="100" value="${replay?.progress ?? 0}"></progress><table><tbody>${board}</tbody></table></article></section>`;
+  const board = replay ? replay.live.map((entry, index) => `<tr class="${entry.issue ? 'race-issue' : ''}"><td>${index + 1}</td><td>${escapeHtml(entry.driver)}</td><td>${escapeHtml(entry.constructor)}</td><td>${entry.delta}</td><td>${entry.lastLap}</td><td>${escapeHtml(entry.issue)}</td></tr>`).join('') : '';
+  const events = replay ? replay.events.slice(-MAX_RACE_EVENTS).map((event) => `<li>${event.lap}/${replay.totalLaps} · ${escapeHtml(event.text)}</li>`).join('') : '';
+  return `<section class="race-grid"><article class="panel"><h2>${escapeHtml(race.name)}</h2><div class="metrics">${metric('Circuit', race.circuit)}${metric('Lieu', `${race.locality}, ${race.country}`)}${metric('Date', dateFormat.format(new Date(`${race.date}T12:00:00Z`)))}${metric('Tours', replay ? replay.totalLaps : '')}${metric('Tour', replay ? `${replay.currentLap} / ${replay.totalLaps}` : '')}</div><div class="actions race-controls"><button type="button" data-live="start">Départ</button><button type="button" data-live="pause">Pause</button><button type="button" data-live="speed">x${raceSpeed}</button><button type="button" id="next-race">Valider</button></div></article><article class="panel"><h2>Week-end</h2><ol>${weekendSessions(game.year, race).map(([name, date]) => `<li>${name} — ${date}</li>`).join('')}</ol></article><article class="panel live-panel"><h2>Temps réel</h2><progress max="100" value="${replay?.progress ?? 0}"></progress><table><thead><tr><th>P</th><th>Pilote</th><th>Écurie</th><th>Delta</th><th>Tour</th><th>Problème</th></tr></thead><tbody>${board}</tbody></table></article><article class="panel events-panel"><h2>Événements</h2><ol>${events}</ol></article></section>`;
 }
 
 function renderCalendar() { return `<article class="panel calendar-panel"><h2>Calendrier</h2><ol>${game.calendar.map((race, index) => `<li class="${index < game.raceIndex ? 'done' : index === game.raceIndex ? 'current' : ''}">${race.round}. ${escapeHtml(race.name)} — ${escapeHtml(race.circuit)}</li>`).join('')}</ol></article>`; }
@@ -187,7 +199,53 @@ function developDriver(id) { if (!spend(500_000)) return; const driver = game.dr
 
 async function createReplay(race) {
   const results = await fetchRaceResults(game.year, race.round);
-  raceReplay = { round: race.round, tick: 0, progress: 0, live: results.map((result) => ({ ...result, gap: result.position === 1 ? 'Leader' : `+${Math.max(1, result.position - 1) * 2}s` })) };
+  const totalLaps = Math.max(...results.map((result) => Number(result.laps) || 0), 1);
+  raceReplay = {
+    round: race.round,
+    tick: 0,
+    currentLap: 0,
+    totalLaps,
+    progress: 0,
+    events: [],
+    live: results.map((result) => ({
+      ...result,
+      pace: 88 + result.position * 1.4,
+      runningPosition: Math.max(1, Number(result.grid) || result.position),
+      deltaValue: result.position === 1 ? 0 : result.position * 2.5,
+      delta: result.position === 1 ? 'Leader' : `+${(result.position * 2.5).toFixed(1)}s`,
+      lastLap: '',
+      issue: '',
+    })),
+  };
+}
+
+function updateRaceReplay() {
+  const nextLap = Math.min(raceReplay.totalLaps, raceReplay.currentLap + raceSpeed);
+  const random = createRandom(seedFrom(`${game.year}-${raceReplay.round}-${nextLap}`));
+  raceReplay.tick = nextLap;
+  raceReplay.currentLap = nextLap;
+  raceReplay.progress = Math.round((nextLap / raceReplay.totalLaps) * 100);
+  raceReplay.live = raceReplay.live.map((entry) => {
+    const target = entry.position * 3.2;
+    const fluctuation = (random() - .5) * 2.4;
+    const issue = issueLabel(entry, nextLap, raceReplay.totalLaps);
+    const lastLap = issue && Number(entry.laps) < nextLap ? '' : `1:${Math.max(8, entry.pace + fluctuation).toFixed(3)}`;
+    const deltaValue = entry.position === 1 ? 0 : Math.max(0.1, (entry.deltaValue * .62) + (target * .38) + fluctuation);
+    return { ...entry, issue, lastLap, deltaValue, delta: formatDelta(deltaValue) };
+  }).sort((a, b) => {
+    const progressA = Math.min(1, nextLap / Math.max(1, Number(a.laps)));
+    const progressB = Math.min(1, nextLap / Math.max(1, Number(b.laps)));
+    return ((a.position * progressA) + (a.runningPosition * (1 - progressA))) - ((b.position * progressB) + (b.runningPosition * (1 - progressB)));
+  });
+  raceReplay.live.forEach((entry, index) => {
+    if (entry.runningPosition !== index + 1 && raceReplay.events.at(-1)?.driverId !== entry.driverId) {
+      raceReplay.events.push({ lap: nextLap, driverId: entry.driverId, text: `${entry.driver} P${index + 1}` });
+    }
+    if (entry.issue && !raceReplay.events.some((event) => event.driverId === `${entry.driverId}-issue`)) {
+      raceReplay.events.push({ lap: nextLap, driverId: `${entry.driverId}-issue`, text: `${entry.driver} · ${entry.issue}` });
+    }
+    entry.runningPosition = index + 1;
+  });
 }
 
 async function startLiveRace() {
@@ -196,9 +254,7 @@ async function startLiveRace() {
   if (!raceReplay || raceReplay.round !== race.round) await createReplay(race);
   clearInterval(raceTimer);
   raceTimer = setInterval(() => {
-    raceReplay.tick += raceSpeed;
-    raceReplay.progress = Math.min(100, raceReplay.tick);
-    raceReplay.live = raceReplay.live.map((entry, index) => ({ ...entry, gap: index === 0 ? 'Leader' : `+${Math.max(0, Math.round((entry.position - 1) * 1.8 * (1 - raceReplay.progress / 130)))}s` }));
+    updateRaceReplay();
     if (raceReplay.progress >= 100) clearInterval(raceTimer);
     renderGame();
   }, RACE_TICK_MS);
