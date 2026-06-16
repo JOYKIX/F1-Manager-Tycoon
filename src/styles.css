@@ -71,6 +71,8 @@ h2 { font-size: 1rem; text-transform: uppercase; }
 .dashboard { display: grid; gap: 18px; grid-template-columns: repeat(3, minmax(220px, 1fr)); }
 .race-grid { display: grid; gap: 18px; grid-template-columns: 1.05fr .95fr; }
 .live-panel { grid-column: 1 / -1; }
+.events-panel { grid-column: 1 / -1; }
+.race-issue td { color: #ffb3b3; }
 .calendar-panel { grid-column: span 2; }
 .finance-panel { display: grid; gap: 14px; }
 
@@ -143,5 +145,6 @@ li.done { opacity: .45; }
   .game { grid-template-columns: 1fr; }
   .dashboard, .race-grid { grid-template-columns: 1fr; }
   .live-panel { grid-column: auto; }
+  .events-panel { grid-column: auto; }
   .calendar-panel { grid-column: auto; }
 }
