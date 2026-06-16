@@ -67,11 +67,17 @@ h2 { font-size: 1rem; text-transform: uppercase; }
 
 .setup-grid { display: grid; gap: 16px; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); align-items: end; }
 .game { display: grid; gap: 22px; grid-template-columns: 280px 1fr; }
+.workspace { min-width: 0; }
 .dashboard { display: grid; gap: 18px; grid-template-columns: repeat(3, minmax(220px, 1fr)); }
+.race-grid { display: grid; gap: 18px; grid-template-columns: 1.05fr .95fr; }
+.live-panel { grid-column: 1 / -1; }
 .calendar-panel { grid-column: span 2; }
 .finance-panel { display: grid; gap: 14px; }
 
 .manager-card dl, .metrics { display: grid; gap: 10px; margin: 16px 0 0; }
+.page-nav { display: grid; gap: 8px; margin-top: 16px; }
+.page-nav button { background: rgba(255,255,255,.08); border-color: rgba(255,255,255,.12); text-align: left; }
+.page-nav button.active { background: var(--accent); border-color: transparent; }
 .manager-card div, .metrics div {
   align-items: center;
   background: rgba(0,0,0,.28);
@@ -118,18 +124,24 @@ dd { margin: 0; font-weight: 800; }
 .car-shape span { background: rgba(255,255,255,.7); border-radius: 50%; height: 34px; left: 50%; position: absolute; top: -20px; transform: translateX(-50%); width: 58px; }
 
 .actions, .drivers { display: grid; gap: 10px; margin-top: 16px; }
+.race-controls { grid-template-columns: repeat(4, minmax(0, 1fr)); }
 .actions button, .driver-card button, .finance-panel button { width: 100%; }
 .driver-card { background: rgba(0,0,0,.28); border-radius: 16px; display: grid; gap: 8px; padding: 12px; }
 .driver-card span { color: #c7c7c7; }
 progress { accent-color: var(--accent); width: 100%; }
 
 ol { display: grid; gap: 8px; list-style: none; margin: 16px 0 0; max-height: 420px; overflow: auto; padding: 0; }
+table { border-collapse: collapse; margin-top: 16px; width: 100%; }
+th, td { border-bottom: 1px solid rgba(255,255,255,.1); padding: 10px; text-align: left; }
+th { color: #bdbdbd; font-size: .78rem; text-transform: uppercase; }
+h3 { margin: 16px 0 0; }
 li { border-left: 4px solid rgba(255,255,255,.15); padding: 8px 10px; }
 li.current { border-color: var(--accent); background: rgba(255,255,255,.08); }
 li.done { opacity: .45; }
 
 @media (max-width: 1000px) {
   .game { grid-template-columns: 1fr; }
-  .dashboard { grid-template-columns: 1fr; }
+  .dashboard, .race-grid { grid-template-columns: 1fr; }
+  .live-panel { grid-column: auto; }
   .calendar-panel { grid-column: auto; }
 }
