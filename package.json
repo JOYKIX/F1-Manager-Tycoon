@@ -1,0 +1,8 @@
+{
+  "scripts": {
+    "fetch:f1": "node scripts/fetch-f1-data.mjs",
+    "check": "node --check scripts/fetch-f1-data.mjs && node --check src/main.js"
+  },
+  "dependencies": {},
+  "devDependencies": {}
+}
