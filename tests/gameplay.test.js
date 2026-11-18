@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   strategyFor, retirementChance, developmentGain, trainingGain, facilityCost, raceIncome,
-  raceWeather, tyreFor, tyreModifiers, sponsorFor, sponsorPayout, pointsForYear, seasonTitleBonus
+  raceWeather, tyreFor, tyreModifiers, sponsorFor, sponsorPayout, pointsForYear, seasonTitleBonus, difficultyFor, aiCompetition
 } from '../src/gameplay.js';
 
 test('stratégies: attaque plus rapide mais risquée', () => {
@@ -48,4 +48,11 @@ test('finances: récompense les bons résultats et respecte les objectifs sponso
   assert.equal(sponsorPayout('regularite',abandon,'a').bonus,0);
   assert.equal(sponsorFor('unknown').id,'regularite');
   assert.ok(seasonTitleBonus(1,10) > seasonTitleBonus(8,10));
+});
+
+test('difficulté : budget, revenus et adversaires évolutifs', () => {
+  assert.equal(difficultyFor('unknown').id, 'pro');
+  assert.ok(difficultyFor('rookie').budgetFactor > difficultyFor('legend').budgetFactor);
+  assert.ok(aiCompetition(0, 'legend') > aiCompetition(0, 'rookie'));
+  assert.ok(aiCompetition(15, 'pro') > aiCompetition(0, 'pro'));
 });
