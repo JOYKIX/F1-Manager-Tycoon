@@ -183,7 +183,7 @@ function seasonStandings() {
       const constructor = constructorRows.get(row.constructorId) ?? { constructor: row.constructor, nationality: row.nationality, points: 0, wins: 0 };
       driver.points += row.points;
       constructor.points += row.points;
-      if (row.position === 1) { driver.wins += 1; constructor.wins += 1; }
+      if (row.position === 1 && row.status !== 'Abandon') { driver.wins += 1; constructor.wins += 1; }
       driverRows.set(row.driverId, driver);
       constructorRows.set(row.constructorId, constructor);
     }
@@ -562,7 +562,7 @@ function updateRaceReplay() {
   raceReplay.live = raceReplay.live.map((entry) => {
     const target = entry.position * 3.2;
     const fluctuation = (random() - .5) * 2.4;
-    const issue = entry.status === 'Abandon' && Number(entry.laps) < nextLap ? 'Abandon' : issueLabel(entry, nextLap, raceReplay.totalLaps);
+    const issue = entry.status === 'Abandon' ? (Number(entry.laps) < nextLap ? 'Abandon' : '') : issueLabel(entry, nextLap, raceReplay.totalLaps);
     const lastLap = issue && Number(entry.laps) < nextLap ? '' : `1:${Math.max(8, entry.pace + fluctuation).toFixed(3)}`;
     const deltaValue = entry.position === 1 ? 0 : Math.max(0.1, (entry.deltaValue * .62) + (target * .38) + fluctuation);
     return { ...entry, issue, lastLap, deltaValue, delta: formatDelta(deltaValue) };
@@ -608,6 +608,7 @@ function changeRaceSpeed() { raceSpeed = raceSpeed === 1 ? 2 : raceSpeed === 2 ?
 
 async function nextRace() {
   if (game.raceIndex >= game.calendar.length) return;
+  pauseLiveRace();
   const race = game.calendar[game.raceIndex];
   simulateRaceResults(race);
   const prize = Math.round(raceIncome(game.results[race.round], game.team.id) * difficultyFor(game.difficulty).incomeFactor);
@@ -634,16 +635,21 @@ async function nextRace() {
     game.career.titles += rank === 1 ? 1 : 0;
     game.career.history.unshift({ year: game.year, team: game.team.name, place: rank, bonus });
   }
-  if (game.raceIndex >= game.calendar.length && game.year < END_YEAR) {
+  const finishedSeason = game.raceIndex >= game.calendar.length && game.year < END_YEAR;
+  raceReplay = null;
+  saveGame();
+  renderGame();
+  if (finishedSeason) {
     try {
       const nextSeasonData = await fetchSeason(game.year + 1);
       game.nextSeasonTeams = nextSeasonData.constructors;
-    } catch { game.nextSeasonTeams = []; setStatus('Saison terminée. Le chargement de l’année suivante a échoué.'); }
+      saveGame();
+      renderGame();
+    } catch {
+      game.nextSeasonTeams = null;
+      setStatus('Saison terminée. La liste des prochaines écuries sera chargée à la transition.');
+    }
   }
-  raceReplay = null;
-  pauseLiveRace();
-  saveGame();
-  renderGame();
 }
 
 async function nextSeason() {
@@ -661,6 +667,7 @@ async function nextSeason() {
   game.entrants = await buildEntrants(game.year, game.seasonTeams, game.team.id, selectedRaceDrivers());
   game.car = { ...teamCarStats(team), reliability: Math.max(45, Math.round(((game.car?.reliability ?? 70) + teamCarStats(team).reliability) / 2) - 8) };
   game.results = {};
+  game.viewRound = null;
   game.raceStrategies = {};
   game.raceTyres = {};
   game.racePitPlans = {};
