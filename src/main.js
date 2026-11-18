@@ -382,10 +382,10 @@ function renderTeam() {
     <div class="screen-heading"><div><span class="eyebrow">TEAM OPERATIONS</span><h2>Ton <em>écurie</em></h2><p>Développe les talents, recrute l’expertise interne et investis intelligemment.</p></div><span class="tag-outline">${escapeHtml(game.team.name)}</span></div>
     <div class="team-layout">
       <section class="panel roster-panel"><div class="section-title"><div><span class="eyebrow">DRIVER LINE-UP</span><h3>Effectif des pilotes</h3></div><span class="tag-outline">${game.drivers.length} pilotes</span></div>
-        <div class="driver-grid">${game.drivers.map((driver,index) => `<div class="driver-tile"><div class="driver-portrait"><span>${String(index+1).padStart(2, '0')}</span><div>${escapeHtml(driver.name.split(' ').map(part => part[0] ?? '').slice(0,2).join(''))}</div></div><div class="driver-info"><strong>${escapeHtml(driver.name)}</strong><span>${escapeHtml(driver.nationality ?? '')} · Potentiel ${driver.potential}</span><div class="ability"><span>Note ${driver.rating}/100</span><progress max="100" value="${driver.rating}"></progress></div><button type="button" data-driver="${escapeHtml(driver.id)}" ${driver.rating >= driver.potential || game.finance.budget < 500_000 ? 'disabled' : ''}>Entraîner +${trainingGain(game.facilities)} · ${money.format(500_000)}</button></div></div>`).join('')}</div>
+        <div class="driver-grid">${game.drivers.map((driver,index) => `<div class="driver-tile"><div class="driver-portrait"><span>${String(index+1).padStart(2, '0')}</span><div>${escapeHtml(driver.name.split(' ').map(part => part[0] ?? '').slice(0,2).join(''))}</div></div><div class="driver-info"><strong>${escapeHtml(driver.name)}</strong><span>${escapeHtml(driver.nationality ?? '')} · Potentiel ${driver.potential}</span><div class="ability"><span>Note ${driver.rating}/100</span><progress max="100" value="${driver.rating}"></progress></div><button type="button" data-driver="${escapeHtml(driver.id)}" ${driver.rating >= driver.potential || raceIsCommitted() || game.finance.budget < 500_000 ? 'disabled' : ''}>Entraîner +${trainingGain(game.facilities)} · ${money.format(500_000)}</button></div></div>`).join('')}</div>
       </section>
       <div class="team-column"><article class="panel"><div class="section-title"><div><span class="eyebrow">PIT WALL</span><h3>Personnel</h3></div></div>
-        <div class="staff-list">${staff.map((item) => `<div class="staff-row"><div><strong>${item.label}</strong><span>${item.detail}</span></div><div class="staff-right"><span>${game.staff[item.key]}/100</span><button type="button" data-staff="${item.key}" ${game.staff[item.key]>=100 || game.finance.budget<750000 ? 'disabled':''}>+4 · ${money.format(750000)}</button></div></div>`).join('')}</div>
+        <div class="staff-list">${staff.map((item) => `<div class="staff-row"><div><strong>${item.label}</strong><span>${item.detail}</span></div><div class="staff-right"><span>${game.staff[item.key]}/100</span><button type="button" data-staff="${item.key}" ${game.staff[item.key]>=100 || raceIsCommitted() || game.finance.budget<750000 ? 'disabled':''}>+4 · ${money.format(750000)}</button></div></div>`).join('')}</div>
       </article>
       <article class="panel"><div class="section-title"><div><span class="eyebrow">FACILITIES</span><h3>Infrastructures</h3></div></div>
         <div class="facility-list">${facilities.map((item) => `<div class="facility-row"><div><strong>${item.label}</strong><span>${item.detail} · Niveau ${game.facilities[item.key]}/10</span></div>${action('Améliorer', 'facility', item.key)}</div>`).join('')}</div>
@@ -497,7 +497,7 @@ function action(label, dataName, key) {
   const cost = isFacility ? facilityCost(level) : 1_000_000;
   const capped = isFacility ? level >= 10 : level >= 100;
   const gain = isFacility ? 'Niveau ' + level + '/10' : 'Niveau ' + level + '/100 · +' + (developmentGain(key, game.facilities) + engineeringBonus());
-  return `<button type="button" data-${dataName}="${key}" ${capped || game.finance.budget < cost ? 'disabled' : ''}>${label} · ${gain} · ${capped ? 'MAX' : money.format(cost)}</button>`;
+  return `<button type="button" data-${dataName}="${key}" ${capped || raceIsCommitted() || game.finance.budget < cost ? 'disabled' : ''}>${label} · ${gain} · ${capped ? 'MAX' : money.format(cost)}</button>`;
 }
 
 function renderResultsTable() {
@@ -524,7 +524,15 @@ function renderStandingsTables() {
   constructorContainer.innerHTML = renderTable(['POS', 'ÉCURIE', 'PAYS', 'V', 'PTS'],constructorRows);
 }
 
-function spend(amount) { if (game.finance.budget < amount) { setStatus('Budget insuffisant'); return false; } game.finance.budget -= amount; game.finance.expenses += amount; return true; }
+function raceIsCommitted() {
+  const race = game?.calendar?.[game.raceIndex];
+  return Boolean(race && game.results?.[race.round]);
+}
+function spend(amount) {
+  if (raceIsCommitted()) { setStatus('Course lancée : valide les résultats avant d’investir.'); return false; }
+  if (game.finance.budget < amount) { setStatus('Budget insuffisant'); return false; }
+  game.finance.budget -= amount; game.finance.expenses += amount; return true;
+}
 function engineeringBonus() { return Math.floor(Math.max(0, game.staff.engineering - 60) / 20); }
 function developCar(key) { if (!Object.hasOwn(game.car, key) || game.car[key] >= 100 || !spend(1_000_000)) return; game.car[key] = Math.min(100, game.car[key] + developmentGain(key, game.facilities) + engineeringBonus()); saveGame(); renderGame(); }
 function upgradeFacility(key) { if (!Object.hasOwn(game.facilities, key) || game.facilities[key] >= 10 || !spend(facilityCost(game.facilities[key]))) return; game.facilities[key] += 1; game.staff.engineering = Math.min(100, game.staff.engineering + 1); saveGame(); renderGame(); }
