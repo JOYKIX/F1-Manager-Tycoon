@@ -67,17 +67,18 @@ function isValidGame(data) {
     && data.team && typeof data.team.id === 'string' && typeof data.team.name === 'string'
     && data.manager && typeof data.manager.firstName === 'string' && typeof data.manager.lastName === 'string'
     && typeof data.manager.birthDate === 'string' && Array.isArray(data.calendar)
-    && data.calendar.length > 0 && data.calendar.length <= 100 && data.calendar.every((race) => race && Number.isInteger(race.round) && typeof race.name === 'string' && typeof race.circuit === 'string' && typeof race.date === 'string') && Array.isArray(data.drivers)
-    && Array.isArray(data.entrants) && data.drivers.every((driver) => driver && typeof driver.id === 'string' && typeof driver.name === 'string') && Number.isInteger(data.raceIndex)
+    && data.calendar.length > 0 && data.calendar.length <= 100 && data.calendar.every((race) => race && Number.isInteger(race.round) && typeof race.name === 'string' && typeof race.circuit === 'string' && typeof race.date === 'string' && Number.isFinite(Date.parse(race.date))) && Array.isArray(data.drivers)
+    && Array.isArray(data.entrants) && data.drivers.every((driver) => driver && typeof driver.id === 'string' && typeof driver.name === 'string' && Number.isFinite(driver.rating) && Number.isFinite(driver.potential)) && data.entrants.every((entry) => entry && entry.team && typeof entry.team.id === 'string' && entry.driver && typeof entry.driver.id === 'string' && Number.isFinite(entry.driver.rating) && entry.car && Number.isFinite(entry.car.reliability)) && Number.isInteger(data.raceIndex)
     && data.raceIndex >= 0 && data.raceIndex <= data.calendar.length
-    && data.car && Number.isFinite(data.car.chassis) && Number.isFinite(data.car.reliability)
-    && data.staff && Number.isFinite(data.staff.strategy) && Number.isFinite(data.staff.pitStop)
-    && data.finance && Number.isFinite(data.finance.budget) && data.facilities);
+    && data.car && ['chassis','aero','engine','reliability'].every((key) => Number.isFinite(data.car[key]) && data.car[key] >= 0 && data.car[key] <= 100)
+    && data.staff && ['engineering','strategy','pitStop'].every((key) => Number.isFinite(data.staff[key]))
+    && data.finance && ['budget','income','expenses'].every((key) => Number.isFinite(data.finance[key]))
+    && data.facilities && ['factory','simulator','windTunnel'].every((key) => Number.isFinite(data.facilities[key])));
 }
 function normalizeGame(data) {
   if (!isValidGame(data)) return null;
   data.results ??= {};
-  data.seasonTeams ??= [data.team];
+  if (!Array.isArray(data.seasonTeams) || !data.seasonTeams.length) data.seasonTeams = [data.team];
   data.raceStrategies ??= {};
   data.raceTyres ??= {};
   data.racePitPlans ??= {};
@@ -86,7 +87,10 @@ function normalizeGame(data) {
   data.career ??= { races: data.raceIndex, wins: 0, podiums: 0, titles: 0, history: [] };
   data.finance.lastIncome ??= null;
   if (!Array.isArray(data.career.history)) data.career.history = [];
-  if (!Number.isFinite(data.career.races)) data.career.races = data.raceIndex;
+  data.career.history = data.career.history.filter((record) => record && Number.isInteger(record.year) && typeof record.team === 'string' && Number.isFinite(record.place) && Number.isFinite(record.bonus)).slice(0, 100);
+  for (const key of ['races', 'wins', 'podiums', 'titles']) {
+    if (!Number.isFinite(data.career[key])) data.career[key] = key === 'races' ? data.raceIndex : 0;
+  }
   return data;
 }
 function loadSavedGame() {
