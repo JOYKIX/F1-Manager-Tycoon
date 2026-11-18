@@ -373,28 +373,101 @@ function renderTeam() {
 }
 
 function renderRace(race) {
-  if (!race) return '<section class="panel"></section>';
+  if (!race) return '<section class="panel empty-state">Aucun Grand Prix à disputer.</section>';
   ensureDriverSelection();
+  const weather = raceWeather(game.year, race);
   const replay = raceReplay?.round === race.round ? raceReplay : null;
-  game.raceStrategies ??= {};
-  const strategyControls = selectedRaceDrivers().map((driver) => `<label>Stratégie · ${escapeHtml(driver.name)}<select data-strategy-driver="${escapeHtml(driver.id)}" ${replay ? 'disabled' : ''}>${Object.values(STRATEGIES).map((strategy) => `<option value="${strategy.id}" ${strategyFor(game.raceStrategies[driver.id]).id === strategy.id ? 'selected' : ''}>${strategy.label}</option>`).join('')}</select></label>`).join('');
-  const options = (selectedId) => game.drivers.map((driver) => `<option value="${escapeHtml(driver.id)}" ${driver.id === selectedId ? 'selected' : ''}>${escapeHtml(driver.name)}</option>`).join('');
-  const selectedIds = new Set(Object.values(game.driverSelection));
-  const otherDrivers = game.drivers.filter((driver) => !selectedIds.has(driver.id)).map((driver) => `<li>${escapeHtml(driver.name)}</li>`).join('');
-  const board = replay ? replay.live.map((entry, index) => `<tr class="${entry.issue ? 'race-issue' : ''} ${positionClass(index)}"><td>${index + 1}</td><td>${escapeHtml(entry.driver)}</td><td>${escapeHtml(entry.constructor)}</td><td>${entry.delta}</td><td>${entry.lastLap}</td><td>${escapeHtml(entry.issue)}</td></tr>`).join('') : '';
-  const events = replay ? replay.events.slice(-MAX_RACE_EVENTS).map((event) => `<li>${event.lap}/${replay.totalLaps} · ${escapeHtml(event.text)}</li>`).join('') : '';
-  return `<section class="race-grid"><article class="panel"><h2>${escapeHtml(race.name)}</h2><div class="metrics">${metric('Circuit', race.circuit)}${metric('Lieu', `${race.locality}, ${race.country}`)}${metric('Date', dateFormat.format(new Date(`${race.date}T12:00:00Z`)))}${metric('Tours', replay ? replay.totalLaps : '')}${metric('Tour', replay ? `${replay.currentLap} / ${replay.totalLaps}` : '')}</div><div class="actions race-controls"><button type="button" data-live="start">Départ</button><button type="button" data-live="pause">Pause</button><button type="button" data-live="speed">x${raceSpeed}</button><button type="button" id="next-race">Valider</button></div></article><article class="panel race-drivers-panel"><h2>Pilotes GP</h2><div class="race-driver-selects"><label>Pilote 1<select data-race-driver="first">${options(game.driverSelection.first)}</select></label><label>Pilote 2<select data-race-driver="second">${options(game.driverSelection.second)}</select></label></div><h3>Stratégies de course</h3><div class="race-driver-selects">${strategyControls}</div><p class="strategy-help">Préserver : moins de risques · Équilibrée : compromis · Attaquer : plus rapide, plus risqué. Choix verrouillés au départ.</p><h3>Autres pilotes</h3><ol>${otherDrivers}</ol></article><article class="panel"><h2>Week-end</h2><ol>${weekendSessions(game.year, race).map(([name, date]) => `<li>${name} — ${date}</li>`).join('')}</ol></article><article class="panel live-panel"><h2>Temps réel</h2><progress max="100" value="${replay?.progress ?? 0}"></progress>${renderTable(['P', 'Pilote', 'Écurie', 'Delta', 'Tour', 'Problème'], board ? [board] : [], '')}</article><article class="panel events-panel"><h2>Événements</h2><ol>${events}</ol></article></section>`;
+  const locked = Boolean(replay || game.results?.[race.round]);
+  const sponsor = sponsorFor(game.sponsor);
+  const driverOptions = (selectedId) => game.drivers.map((driver) => `<option value="${escapeHtml(driver.id)}" ${driver.id === selectedId ? 'selected' : ''}>${escapeHtml(driver.name)} · ${driver.rating}</option>`).join('');
+  const selected = selectedRaceDrivers();
+  const selectedIds = new Set(selected.map((driver) => driver.id));
+  const otherDrivers = game.drivers.filter((driver) => !selectedIds.has(driver.id)).map((driver) => escapeHtml(driver.name)).join(' · ');
+  const selections = [
+    { key:'first', label:'01 · PILOTE TITULAIRE' },
+    { key:'second', label:'02 · SECOND PILOTE' },
+  ].map(({key,label},index) => {
+    const driver = selected[index];
+    if (!driver) return '';
+    const tyre = tyreFor(game.raceTyres?.[driver.id] ?? (weather.condition === 'wet' ? 'wet' : 'medium'));
+    return `<div class="tactic-card">
+      <div class="tactic-head"><span>${label}</span><strong>${escapeHtml(driver.name)}</strong></div>
+      <label>Choix du pilote<select data-race-driver="${key}" ${locked ? 'disabled' : ''}>${driverOptions(game.driverSelection[key])}</select></label>
+      <div class="tactic-selects">
+        <label>Mode de course<select data-strategy-driver="${escapeHtml(driver.id)}" ${locked ? 'disabled' : ''}>${Object.values(STRATEGIES).map((strategy) => `<option value="${strategy.id}" ${strategyFor(game.raceStrategies?.[driver.id]).id === strategy.id ? 'selected' : ''}>${strategy.label}</option>`).join('')}</select></label>
+        <label>Gomme<select data-tyre-driver="${escapeHtml(driver.id)}" ${locked ? 'disabled' : ''}>${Object.values(TYRES).map((compound) => `<option value="${compound.id}" ${tyre.id === compound.id ? 'selected' : ''}>${compound.label}</option>`).join('')}</select></label>
+        <label>Arrêts prévus<select data-pit-driver="${escapeHtml(driver.id)}" ${locked ? 'disabled' : ''}><option value="1" ${Number(game.racePitPlans?.[driver.id]) !== 2 ? 'selected' : ''}>1 arrêt · Conservateur</option><option value="2" ${Number(game.racePitPlans?.[driver.id]) === 2 ? 'selected' : ''}>2 arrêts · Attaque</option></select></label>
+      </div>
+      <div class="tactic-note">${escapeHtml(strategyFor(game.raceStrategies?.[driver.id]).description)} · ${escapeHtml(tyre.description)}</div>
+    </div>`;
+  }).join('');
+  const board = replay ? replay.live.map((entry,index) => `<tr class="${entry.issue ? 'race-issue' : ''} ${positionClass(index)} ${entry.constructorId === game.team.id ? 'highlight-row' : ''}"><td class="position-cell">${String(index+1).padStart(2,'0')}</td><td><strong>${escapeHtml(entry.driver)}</strong></td><td>${escapeHtml(entry.constructor)}</td><td><span class="tyre-chip tyre-${entry.tyre ?? 'medium'}">${escapeHtml(tyreFor(entry.tyre).label)}</span></td><td>${escapeHtml(entry.delta)}</td><td>${escapeHtml(entry.lastLap || '—')}</td><td>${escapeHtml(entry.issue || 'En piste')}</td></tr>`).join('') : '';
+  const events = replay?.events?.length ? replay.events.slice(-MAX_RACE_EVENTS).reverse().map((event) => `<li><span class="event-lap">TOUR ${event.lap}</span><strong>${escapeHtml(event.text)}</strong></li>`).join('') : '<li><span class="event-lap">EN ATTENTE</span><strong>La course n’a pas encore commencé.</strong></li>';
+  return `<div class="screen-stack race-screen">
+    <section class="race-hero panel"><div class="race-hero-main"><span class="eyebrow"><span class="signal-dot"></span> RACE WEEKEND / ROUND ${race.round}</span><h2>${escapeHtml(race.name)}</h2><p>${escapeHtml(race.circuit)} · ${escapeHtml(race.locality)}, ${escapeHtml(race.country)}</p><div class="race-date">${dateFormat.format(new Date(race.date+'T12:00:00Z'))}</div></div>
+      <div class="race-weather"><span class="weather-giant">${weather.icon}</span><div><span class="eyebrow">CONDITIONS SIMULÉES</span><strong>${weather.label}</strong><span>${weather.temperature}°C · ${weather.condition === 'wet' ? 'Privilégie les pneus pluie' : 'Piste plutôt sèche'}</span></div></div></section>
+    <div class="race-layout">
+      <section class="panel"><div class="section-title"><div><span class="eyebrow">PIT WALL / STRATEGY</span><h3>Préparation de course</h3></div><span class="tag-outline">${locked ? 'Stratégies verrouillées' : 'Modifiable avant le départ'}</span></div>
+        <div class="tactic-grid">${selections}</div><p class="strategy-help">Le mode moteur, les pneus et le nombre d'arrêts influencent la vitesse et le risque d'abandon. La météo est fictive et calculée pour le gameplay.</p>
+        <div class="race-button-bar"><button type="button" data-live="start" ${replay?.progress >= 100 ? 'disabled' : ''}>${replay ? '▶ Reprendre' : '▶ Départ de la course'}</button><button type="button" data-live="pause" class="btn-secondary">Ⅱ Pause</button><button type="button" data-live="speed" class="btn-secondary">Vitesse ×${raceSpeed}</button><button type="button" id="next-race" class="btn-quiet">${replay?.progress >= 100 ? 'Valider les résultats →' : 'Simuler & valider →'}</button></div>
+      </section>
+      <section class="panel race-briefing"><div class="section-title"><div><span class="eyebrow">RACE INTELLIGENCE</span><h3>Briefing</h3></div></div>
+        <div class="briefing-stats"><div><span>Distance estimée</span><strong>${50 + (seedFrom(race.name + '-' + race.circuit) % 26)} tours</strong></div><div><span>État du ciel</span><strong>${weather.icon} ${weather.label}</strong></div><div><span>Objectif sponsor</span><strong>${escapeHtml(sponsor.label)}</strong></div><div><span>Prime potentielle</span><strong>${money.format(sponsor.upfront + sponsor.bonus)}</strong></div></div>
+        <p class="briefing-note">${escapeHtml(sponsor.description)} Choisis tes gommes en fonction de la météo et de ton niveau de fiabilité.</p>
+        <div class="weekend-list"><span class="eyebrow">WEEKEND PROGRAM</span>${weekendSessions(game.year,race).map(([name,date]) => `<div><span>${escapeHtml(name)}</span><strong>${escapeHtml(date)}</strong></div>`).join('')}</div>
+        ${otherDrivers ? `<p class="bench-drivers">Réservistes / autres pilotes : ${otherDrivers}</p>` : ''}
+      </section>
+    </div>
+    <section class="panel live-board"><div class="section-title"><div><span class="eyebrow"><span class="signal-dot"></span> LIVE TIMING</span><h3>Chronométrage</h3></div><div class="live-status"><strong>${replay ? 'TOUR ' + replay.currentLap + ' / ' + replay.totalLaps : 'AVANT COURSE'}</strong><span>${replay?.progress ?? 0}%</span></div></div>
+      <progress max="100" value="${replay?.progress ?? 0}" aria-label="Progression de la course"></progress>
+      <div class="table-scroll">${board ? renderTable(['POS', 'PILOTE', 'ÉCURIE', 'PNEUS', 'ÉCART', 'DERNIER TOUR', 'STATUT'], [board]) : '<div class="live-empty"><strong>FEUX ÉTEINTS DANS...</strong><p>Configure tes pilotes et clique sur « Départ de la course » pour lancer la simulation en direct.</p><div class="starting-lights">● ● ● ● ●</div></div>'}</div>
+    </section>
+    <section class="panel race-event-panel"><div class="section-title"><div><span class="eyebrow">RACE DIRECTOR</span><h3>Journal de course</h3></div></div><ol class="event-feed">${events}</ol></section>
+  </div>`;
 }
 
-function renderCalendar() { return `<article class="panel calendar-panel"><h2>Calendrier</h2><ol>${game.calendar.map((race, index) => `<li class="${index < game.raceIndex ? 'done' : index === game.raceIndex ? 'current' : ''}">${race.round}. ${escapeHtml(race.name)} — ${escapeHtml(race.circuit)}</li>`).join('')}</ol></article>`; }
-function renderResults() { return `<article class="panel"><h2>Résultats</h2><div id="results-table"></div></article>`; }
-function renderStandings() { return `<section class="standings-grid"><article class="panel"><h2>Pilotes</h2><div id="driver-standings"></div></article><article class="panel"><h2>Constructeurs</h2><div id="constructor-standings"></div></article></section>`; }
-function renderFinance() {
-  const seasonDone = game.raceIndex >= game.calendar.length;
-  const teams = (game.nextSeasonTeams ?? game.seasonTeams ?? []).map((team) => `<option value="${team.id}" ${team.id === game.team.id ? 'selected' : ''}>${escapeHtml(team.name)}</option>`).join('');
-  const next = seasonDone ? (game.year >= END_YEAR ? '<p>Carrière terminée : tu as atteint la dernière saison disponible !</p>' : `<label>Écurie<select id="next-team-select">${teams}</select></label><button id="next-season" type="button">Saison suivante</button>`) : '';
-  return `<section class="dashboard"><article class="panel finance-panel"><h2>Finances</h2><div class="metrics">${metric('Revenus', money.format(game.finance.income))}${metric('Dépenses', money.format(game.finance.expenses))}${metric('Budget', money.format(game.finance.budget))}</div>${next}<button id="restart-game" type="button">Recommencer</button></article></section>`;
+function renderCalendar() {
+  return `<div class="screen-stack"><div class="screen-heading"><div><span class="eyebrow">WORLD CHAMPIONSHIP / ${game.year}</span><h2>Calendrier <em>F1</em></h2><p>${game.calendar.length} Grands Prix prévus pour la saison ${game.year}.</p></div><span class="tag-outline">${game.raceIndex} / ${game.calendar.length} disputés</span></div>
+  <div class="calendar-grid">${game.calendar.map((race,index) => {const weather = raceWeather(game.year, race);return `<article class="calendar-tile ${index < game.raceIndex ? 'is-completed' : index === game.raceIndex ? 'is-next' : ''}"><div class="calendar-top"><span>ROUND ${String(race.round).padStart(2,'0')}</span><span>${index < game.raceIndex ? '✓ TERMINÉ' : index === game.raceIndex ? '● À VENIR' : 'PROGRAMMÉ'}</span></div><h3>${escapeHtml(race.name)}</h3><p>${escapeHtml(race.circuit)}</p><div class="calendar-footer"><span>${dateFormat.format(new Date(race.date+'T12:00:00Z'))}</span><span title="Météo de jeu simulée">${weather.icon} ${weather.label}</span></div></article>`;}).join('')}</div></div>`;
 }
+
+function renderResults() {
+  const completed = game.calendar.slice(0,game.raceIndex);
+  const current = completed.find((race) => Number(race.round) === Number(game.viewRound)) ?? completed.at(-1);
+  const options = completed.map((race) => `<option value="${race.round}" ${race.round === current?.round ? 'selected' : ''}>${escapeHtml(race.name)}</option>`).join('');
+  return `<div class="screen-stack"><div class="screen-heading"><div><span class="eyebrow">OFFICIAL CLASSIFICATION</span><h2>Résultats <em>GP</em></h2><p>Qualifications, arrivées, abandons et points par Grand Prix.</p></div>${current ? `<label>Choisir un Grand Prix<select id="results-race-select">${options}</select></label>` : ''}</div><section class="panel"><div id="results-table"></div></section></div>`;
+}
+
+function renderStandings() {
+  return `<div class="screen-stack"><div class="screen-heading"><div><span class="eyebrow">CHAMPIONSHIP CLASSIFICATION</span><h2>Classements <em>${game.year}</em></h2><p>Le titre se gagne à la régularité. Les barèmes de points suivent l'époque.</p></div><span class="tag-outline">${game.raceIndex} / ${game.calendar.length} courses</span></div><section class="standings-grid"><article class="panel table-panel"><div class="section-title"><div><span class="eyebrow">DRIVERS CHAMPIONSHIP</span><h3>Pilotes</h3></div></div><div id="driver-standings" class="table-scroll"></div></article><article class="panel table-panel"><div class="section-title"><div><span class="eyebrow">CONSTRUCTORS CHAMPIONSHIP</span><h3>Constructeurs</h3></div></div><div id="constructor-standings" class="table-scroll"></div></article></section></div>`;
+}
+
+function renderFinance() {
+  const done = game.raceIndex >= game.calendar.length;
+  const last = game.finance.lastIncome;
+  const sponsor = sponsorFor(game.sponsor);
+  const teams = (game.nextSeasonTeams?.length ? game.nextSeasonTeams : game.seasonTeams ?? []).map((team) => `<option value="${escapeHtml(team.id)}" ${team.id === game.team.id ? 'selected' : ''}>${escapeHtml(team.name)}</option>`).join('');
+  const next = done ? (game.year >= END_YEAR ? '<p class="empty-copy">Tu as atteint 2026, dernière saison actuellement disponible.</p>' : `<div class="next-season-panel"><span class="eyebrow">PROCHAIN CHAPITRE</span><h3>Passer à ${game.year+1}</h3><label>Choisir une écurie<select id="next-team-select">${teams}</select></label><button id="next-season" type="button">Commencer la saison ${game.year+1} →</button></div>`) : '';
+  return `<div class="screen-stack">
+    <div class="screen-heading"><div><span class="eyebrow">TEAM ECONOMY / COMMERCIAL</span><h2>Finances <em>& sponsors</em></h2><p>Chaque résultat compte. Investis tes revenus et relève les défis commerciaux.</p></div><span class="tag-outline">${money.format(game.finance.budget)}</span></div>
+    <section class="finance-stats"><article class="finance-stat"><span>Trésorerie</span><strong>${money.format(game.finance.budget)}</strong><small>Budget disponible</small></article><article class="finance-stat"><span>Revenus cumulés</span><strong>${money.format(game.finance.income)}</strong><small>Primes de course, sponsors et saisons</small></article><article class="finance-stat"><span>Dépenses cumulées</span><strong>${money.format(game.finance.expenses)}</strong><small>R&D et personnel</small></article></section>
+    <div class="finance-layout">
+      <section class="panel"><div class="section-title"><div><span class="eyebrow">COMMERCIAL PARTNERSHIPS</span><h3>Contrat sponsor</h3></div><span class="tag-outline">Par course</span></div>
+        <p class="muted-paragraph">Choisis ton partenaire avant le départ. Plus l'objectif est difficile, plus la prime est élevée.</p>
+        <label>Ton partenaire actuel<select id="sponsor-select" ${raceReplay || game.results?.[game.calendar[game.raceIndex]?.round] ? 'disabled' : ''}>${Object.values(SPONSORS).map((entry) => `<option value="${entry.id}" ${entry.id === sponsor.id ? 'selected' : ''}>${entry.label}</option>`).join('')}</select></label>
+        <div class="sponsor-details"><div><span>Allocation garantie</span><strong>${money.format(sponsor.upfront)}</strong></div><div><span>Prime d'objectif</span><strong>${money.format(sponsor.bonus)}</strong></div></div>
+        <p class="briefing-note">${escapeHtml(sponsor.description)}</p>
+        ${last ? `<div class="last-receipt"><span class="eyebrow">DERNIER GRAND PRIX / ${escapeHtml(last.race)}</span><div><span>Prime de classement</span><strong>+${money.format(last.prize)}</strong></div><div><span>Sponsor ${last.goalReached ? '✓ Objectif atteint' : '· objectif manqué'}</span><strong>+${money.format(last.sponsor)}</strong></div></div>` : ''}
+      </section>
+      <section class="panel finance-side"><div class="section-title"><div><span class="eyebrow">HALL OF FAME</span><h3>Historique de carrière</h3></div></div>
+        <div class="career-history">${game.career?.history?.length ? game.career.history.slice(0,12).map((record) => `<div><span class="history-year">${record.year}</span><strong>${escapeHtml(record.team)} · P${record.place}</strong><span>+${money.format(record.bonus)}</span></div>`).join('') : '<p class="empty-copy">Termine une saison pour inscrire une ligne au palmarès.</p>'}</div>
+        ${next}
+        <div class="save-actions"><button type="button" id="export-save" class="btn-secondary">Exporter ma sauvegarde ↓</button><button type="button" id="restart-game" class="btn-danger">Effacer et recommencer</button></div>
+      </section>
+    </div>
+  </div>`;
+}
+
 function action(label, dataName, key) {
   const isFacility = dataName === 'facility';
   const level = isFacility ? (game.facilities[key] ?? 1) : game.car[key];
