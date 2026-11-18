@@ -149,7 +149,7 @@ async function buildEntrants(year, constructors, playerTeamId, playerDrivers) {
 function selectedRaceDrivers() {
   const ids = game.driverSelection ?? {};
   const first = game.drivers.find((driver) => driver.id === ids.first) ?? game.drivers[0];
-  const second = game.drivers.find((driver) => driver.id === ids.second && driver.id !== first?.id) ?? game.drivers.find((driver) => driver.id !== first?.id) ?? game.drivers[1] ?? first;
+  const second = game.drivers.find((driver) => driver.id === ids.second && driver.id !== first?.id) ?? game.drivers.find((driver) => driver.id !== first?.id);
   return [first, second].filter(Boolean);
 }
 function ensureDriverSelection() {
@@ -356,7 +356,7 @@ function renderCar(profile) {
       <div class="car-stage"><div class="car-stage-grid"></div><div class="car-shape"><span></span></div><div class="car-stage-mark">TYCOON RACING</div></div>
       <div class="workshop-specs"><span>${escapeHtml(game.team.name)}</span><span>POWER UNIT / ${escapeHtml(profile.powerUnit)}</span><span>ÉVOLUTION / ${Math.round(carAverage(game.car))}%</span></div>
     </div>
-    <div class="upgrade-grid">${stats.map((stat) => `<article class="panel upgrade-card"><div class="upgrade-top"><span class="upgrade-icon">${stat.icon}</span><span class="upgrade-level">${game.car[stat.key]} / 100</span></div><h3>${stat.name}</h3><p>${stat.detail}</p><progress max="100" value="${game.car[stat.key]}" aria-label="Niveau ${stat.name}"></progress><div class="upgrade-bottom"><span>Gain +${developmentGain(stat.key, game.facilities)}</span>${action('Améliorer', 'car', stat.key)}</div></article>`).join('')}</div>
+    <div class="upgrade-grid">${stats.map((stat) => `<article class="panel upgrade-card"><div class="upgrade-top"><span class="upgrade-icon">${stat.icon}</span><span class="upgrade-level">${game.car[stat.key]} / 100</span></div><h3>${stat.name}</h3><p>${stat.detail}</p><progress max="100" value="${game.car[stat.key]}" aria-label="Niveau ${stat.name}"></progress><div class="upgrade-bottom"><span>Gain +${developmentGain(stat.key, game.facilities) + engineeringBonus()}</span>${action('Améliorer', 'car', stat.key)}</div></article>`).join('')}</div>
   </div>`;
 }
 
@@ -478,7 +478,7 @@ function renderFinance() {
       <section class="panel finance-side"><div class="section-title"><div><span class="eyebrow">HALL OF FAME</span><h3>Historique de carrière</h3></div></div>
         <div class="career-history">${game.career?.history?.length ? game.career.history.slice(0,12).map((record) => `<div><span class="history-year">${record.year}</span><strong>${escapeHtml(record.team)} · P${record.place}</strong><span>+${money.format(record.bonus)}</span></div>`).join('') : '<p class="empty-copy">Termine une saison pour inscrire une ligne au palmarès.</p>'}</div>
         ${next}
-        <div class="save-actions"><button type="button" id="export-save" class="btn-secondary">Exporter ma sauvegarde ↓</button><button type="button" id="restart-game" class="btn-danger">Effacer et recommencer</button></div>
+        <div class="save-actions"><button type="button" data-export-save class="btn-secondary">Exporter ma sauvegarde ↓</button><button type="button" id="restart-game" class="btn-danger">Effacer et recommencer</button></div>
       </section>
     </div>
   </div>`;
@@ -489,7 +489,7 @@ function action(label, dataName, key) {
   const level = isFacility ? (game.facilities[key] ?? 1) : game.car[key];
   const cost = isFacility ? facilityCost(level) : 1_000_000;
   const capped = isFacility ? level >= 10 : level >= 100;
-  const gain = isFacility ? 'Niveau ' + level + '/10' : 'Niveau ' + level + '/100 · +' + developmentGain(key, game.facilities);
+  const gain = isFacility ? 'Niveau ' + level + '/10' : 'Niveau ' + level + '/100 · +' + (developmentGain(key, game.facilities) + engineeringBonus());
   return `<button type="button" data-${dataName}="${key}" ${capped || game.finance.budget < cost ? 'disabled' : ''}>${label} · ${gain} · ${capped ? 'MAX' : money.format(cost)}</button>`;
 }
 
@@ -518,7 +518,8 @@ function renderStandingsTables() {
 }
 
 function spend(amount) { if (game.finance.budget < amount) { setStatus('Budget insuffisant'); return false; } game.finance.budget -= amount; game.finance.expenses += amount; return true; }
-function developCar(key) { if (!Object.hasOwn(game.car, key) || game.car[key] >= 100 || !spend(1_000_000)) return; game.car[key] = Math.min(100, game.car[key] + developmentGain(key, game.facilities)); saveGame(); renderGame(); }
+function engineeringBonus() { return Math.floor(Math.max(0, game.staff.engineering - 60) / 20); }
+function developCar(key) { if (!Object.hasOwn(game.car, key) || game.car[key] >= 100 || !spend(1_000_000)) return; game.car[key] = Math.min(100, game.car[key] + developmentGain(key, game.facilities) + engineeringBonus()); saveGame(); renderGame(); }
 function upgradeFacility(key) { if (!Object.hasOwn(game.facilities, key) || game.facilities[key] >= 10 || !spend(facilityCost(game.facilities[key]))) return; game.facilities[key] += 1; game.staff.engineering = Math.min(100, game.staff.engineering + 1); saveGame(); renderGame(); }
 function developDriver(id) { const driver = game.drivers.find((item) => item.id === id); if (!driver || driver.rating >= driver.potential || !spend(500_000)) return; driver.rating = Math.min(driver.potential, driver.rating + trainingGain(game.facilities)); saveGame(); renderGame(); }
 function developStaff(key) {
@@ -571,6 +572,13 @@ function updateRaceReplay() {
     if (entry.runningPosition !== index + 1 && raceReplay.events.at(-1)?.driverId !== entry.driverId) {
       raceReplay.events.push({ lap: nextLap, driverId: entry.driverId, text: `${entry.driver} P${index + 1}` });
     }
+    const pitStops = Number(entry.pitPlan) === 2 ? [Math.round(raceReplay.totalLaps * .32), Math.round(raceReplay.totalLaps * .68)] : [Math.round(raceReplay.totalLaps * .54)];
+    pitStops.forEach((stopLap, stopIndex) => {
+      const pitId = entry.driverId + '-pit-' + stopIndex;
+      if (nextLap >= stopLap && nextLap <= Number(entry.laps) && !raceReplay.events.some((event) => event.driverId === pitId)) {
+        raceReplay.events.push({ lap: nextLap, driverId: pitId, text: entry.driver + ' · arrêt aux stands (' + tyreFor(entry.tyre).label + ')' });
+      }
+    });
     if (entry.issue && !raceReplay.events.some((event) => event.driverId === `${entry.driverId}-issue`)) {
       raceReplay.events.push({ lap: nextLap, driverId: `${entry.driverId}-issue`, text: `${entry.driver} · ${entry.issue}` });
     }
@@ -581,7 +589,7 @@ function updateRaceReplay() {
 async function startLiveRace() {
   const race = game.calendar[game.raceIndex];
   if (!race) return;
-  if (!raceReplay || raceReplay.round !== race.round) await createReplay(race);
+  if (!raceReplay || raceReplay.round !== race.round) { await createReplay(race); saveGame(); }
   if (raceReplay.progress >= 100) return;
   clearInterval(raceTimer);
   raceTimer = setInterval(() => {
@@ -774,7 +782,7 @@ document.addEventListener('change', (event) => {
 });
 
 document.addEventListener('click', (event) => {
-  const target = event.target;
+  const target = event.target instanceof Element ? event.target.closest('button') : null;
   if (!(target instanceof HTMLButtonElement)) return;
   if ((target.dataset.page || target.dataset.pageJump) && game) { activePage = target.dataset.page ?? target.dataset.pageJump; renderGame(); window.scrollTo({ top: 0, behavior: 'smooth' }); return; }
   if (!game) return;
@@ -787,7 +795,7 @@ document.addEventListener('click', (event) => {
   if (target.dataset.live === 'speed') changeRaceSpeed();
   if (target.id === 'next-race') nextRace();
   if (target.id === 'next-season') nextSeason().catch(() => setStatus('Impossible de charger la saison suivante. Réessaie.'));
-  if (target.id === 'export-save') exportSave();
+  if (target.id === 'export-save' || target.dataset.exportSave !== undefined) exportSave();
   if (target.id === 'restart-game') restartGame();
 });
 
