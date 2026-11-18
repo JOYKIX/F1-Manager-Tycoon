@@ -1,8 +1,10 @@
 {
   "scripts": {
     "fetch:f1": "node scripts/fetch-f1-data.mjs",
-    "check": "node --check scripts/fetch-f1-data.mjs && node --check src/main.js"
+    "check": "node --check scripts/fetch-f1-data.mjs && node --check src/main.js && node --check src/gameplay.js && npm test",
+    "test": "node --test"
   },
   "dependencies": {},
-  "devDependencies": {}
+  "devDependencies": {},
+  "type": "module"
 }
