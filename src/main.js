@@ -277,20 +277,99 @@ function renderGame() {
 }
 
 function renderHome(profile, race) {
-  return `<section class="dashboard">
-    <article class="panel era-card"><h2>Décennie</h2><div class="era-preview"><span>${profile.layout}</span><span>${profile.powerUnit}</span><span>${profile.aero}</span></div></article>
-    <article class="panel"><h2>Prochaine course</h2><div class="metrics">${metric('Grand Prix', race?.name ?? '')}${metric('Circuit', race?.circuit ?? '')}${metric('Date', race ? dateFormat.format(new Date(`${race.date}T12:00:00Z`)) : '')}</div></article>
-    <article class="panel"><h2>Classement</h2><div class="metrics">${metric('Course', `${Math.min(game.raceIndex + 1, game.calendar.length)} / ${game.calendar.length}`)}${metric('Budget', money.format(game.finance.budget))}</div></article>
-  </section>`;
+  const completed = game.raceIndex;
+  const total = game.calendar.length;
+  const standings = seasonStandings();
+  const teamRank = standings.constructors.find((item) => item.constructor === game.team.name);
+  const points = teamRank?.points ?? 0;
+  const weather = race ? raceWeather(game.year, race) : null;
+  const champion = completed >= total;
+  const percent = total ? Math.round(completed / total * 100) : 0;
+  const career = game.career ?? {};
+  const last = game.finance.lastIncome;
+  const topTeams = standings.constructors.slice(0, 5);
+  const upcoming = game.calendar.slice(completed, completed + 3);
+  const title = champion ? 'Saison terminée' : 'Prochain Grand Prix';
+  const subtitle = champion ? 'Une saison entre dans la légende.' : 'La grille est en place. À toi de décider de la suite.';
+  return `<div class="home-layout">
+    <section class="hero panel">
+      <div class="hero-content">
+        <div class="eyebrow"><span class="signal-dot"></span> PADDOCK / SAISON ${game.year} <span class="hero-round">${champion ? 'FIN DE SAISON' : 'MANCHE ' + (completed + 1) + ' / ' + total}</span></div>
+        <p class="hero-label">${title}</p>
+        <h2 class="hero-title">${escapeHtml(champion ? 'Championnat bouclé' : race?.name ?? 'À venir')}</h2>
+        <p class="hero-subtitle">${escapeHtml(subtitle)}</p>
+        <div class="hero-tags"><span>◈ ${escapeHtml(race?.circuit ?? game.team.name)}</span><span>${weather?.icon ?? '★'} ${weather?.label ?? 'Bilan'}</span><span>${weather?.temperature ?? '—'}°C</span></div>
+        <button class="primary-cta" type="button" data-page-jump="${champion ? 'finance' : 'race'}">${champion ? 'Préparer la saison suivante' : 'Préparer la course'} <span aria-hidden="true">→</span></button>
+      </div>
+      <div class="hero-art" aria-hidden="true"><div class="hero-orbit orbit-one"></div><div class="hero-orbit orbit-two"></div><div class="hero-number">${String(game.year).slice(-2)}</div><div class="hero-watermark">RACE<br>CONTROL</div></div>
+      <div class="hero-bottom"><span>${escapeHtml(game.team.name.toUpperCase())}</span><span>${profile.layout} · ${profile.powerUnit}</span></div>
+    </section>
+    <section class="kpi-grid">
+      <article class="kpi"><span class="kpi-label">Budget disponible</span><strong>${money.format(game.finance.budget)}</strong><span class="kpi-foot">Trésorerie de l'écurie</span></article>
+      <article class="kpi"><span class="kpi-label">Classement constructeur</span><strong>${teamRank ? '#' + teamRank.position : '—'}</strong><span class="kpi-foot">${points} points cette saison</span></article>
+      <article class="kpi"><span class="kpi-label">Performance voiture</span><strong>${Math.round(carAverage(game.car))}<small>/100</small></strong><span class="kpi-foot">Moyenne des 4 attributs</span></article>
+      <article class="kpi"><span class="kpi-label">Avancement</span><strong>${percent}<small>%</small></strong><div class="tiny-track"><span style="width:${percent}%"></span></div></article>
+    </section>
+    <section class="home-bottom">
+      <article class="panel detail-panel">
+        <div class="section-title"><div><span class="eyebrow">TOUR DE CONTRÔLE</span><h3>Calendrier à venir</h3></div><span class="subtle-text">${completed} / ${total} terminées</span></div>
+        <div class="schedule-list">${upcoming.length ? upcoming.map((round, index) => `<div class="schedule-item"><span class="schedule-index">${String(completed + index + 1).padStart(2,'0')}</span><div><strong>${escapeHtml(round.name)}</strong><span>${escapeHtml(round.circuit)} · ${dateFormat.format(new Date(round.date+'T12:00:00Z'))}</span></div><span class="weather-icon" title="Météo fictive de gameplay">${raceWeather(game.year, round).icon}</span></div>`).join('') : '<p class="empty-copy">Toutes les courses sont terminées. Rendez-vous aux finances pour poursuivre.</p>'}</div>
+      </article>
+      <article class="panel detail-panel">
+        <div class="section-title"><div><span class="eyebrow">LIVE STANDINGS</span><h3>Top constructeurs</h3></div><button class="text-link" type="button" data-page-jump="standings">Classement →</button></div>
+        <div class="leader-list">${topTeams.length ? topTeams.map((team,index) => `<div class="leader-item ${team.constructor === game.team.name ? 'my-team' : ''}"><span class="leader-rank">${String(index+1).padStart(2,'0')}</span><strong>${escapeHtml(team.constructor)}</strong><span>${team.points} pts</span></div>`).join('') : '<p class="empty-copy">Les classements apparaissent après le premier Grand Prix.</p>'}</div>
+      </article>
+      <article class="panel detail-panel recap-panel">
+        <div class="section-title"><div><span class="eyebrow">CARRIÈRE</span><h3>Ton palmarès</h3></div><span class="season-stamp">${game.year}</span></div>
+        <div class="mini-stats"><div><strong>${career.races ?? 0}</strong><span>Courses</span></div><div><strong>${career.podiums ?? 0}</strong><span>Podiums</span></div><div><strong>${career.wins ?? 0}</strong><span>Victoires</span></div><div><strong>${career.titles ?? 0}</strong><span>Titres</span></div></div>
+        <p class="recap-text">${last ? 'Dernier GP : ' + escapeHtml(last.race) + ' · +' + money.format(last.total) : 'À toi d’écrire l’histoire de cette écurie.'}</p>
+      </article>
+    </section>
+  </div>`;
 }
 
 function renderCar(profile) {
-  return `<section class="dashboard"><article class="panel car-panel"><h2>Voiture</h2><div class="car-stage"><div class="car-shape"><span></span></div></div><div class="metrics">${metric('Châssis', game.car.chassis)}${metric('Aéro', game.car.aero)}${metric('Moteur', game.car.engine)}${metric('Fiabilité', game.car.reliability)}${metric('Format', `${profile.layout} · ${profile.powerUnit}`)}</div></article><article class="panel"><h2>Développement</h2><div class="actions">${action('Aéro', 'car', 'aero')}${action('Châssis', 'car', 'chassis')}${action('Moteur', 'car', 'engine')}${action('Fiabilité', 'car', 'reliability')}</div></article></section>`;
+  const stats = [
+    { key:'chassis', name:'Châssis', icon:'◈', detail:'Stabilité et équilibre' },
+    { key:'aero', name:'Aérodynamique', icon:'≋', detail:'Appui et efficacité' },
+    { key:'engine', name:'Moteur', icon:'ϟ', detail:'Puissance et vitesse de pointe' },
+    { key:'reliability', name:'Fiabilité', icon:'✦', detail:'Réduit le risque d’abandon' },
+  ];
+  return `<div class="screen-stack">
+    <div class="screen-heading"><div><span class="eyebrow">ENGINEERING DEPARTMENT</span><h2>Développement <em>R&D</em></h2><p>Investis dans ta monoplace. Les installations renforcent les gains à chaque amélioration.</p></div><div class="screen-score">${Math.round(carAverage(game.car))}<span>/100</span></div></div>
+    <div class="car-workshop panel"><div class="workshop-head"><span class="eyebrow">CHASSIS DESIGN / ${game.year}</span><span class="tag-outline">${escapeHtml(profile.layout)} · ${escapeHtml(profile.powerUnit)}</span></div>
+      <div class="car-stage"><div class="car-stage-grid"></div><div class="car-shape"><span></span></div><div class="car-stage-mark">TYCOON RACING</div></div>
+      <div class="workshop-specs"><span>${escapeHtml(game.team.name)}</span><span>POWER UNIT / ${escapeHtml(profile.powerUnit)}</span><span>ÉVOLUTION / ${Math.round(carAverage(game.car))}%</span></div>
+    </div>
+    <div class="upgrade-grid">${stats.map((stat) => `<article class="panel upgrade-card"><div class="upgrade-top"><span class="upgrade-icon">${stat.icon}</span><span class="upgrade-level">${game.car[stat.key]} / 100</span></div><h3>${stat.name}</h3><p>${stat.detail}</p><progress max="100" value="${game.car[stat.key]}" aria-label="Niveau ${stat.name}"></progress><div class="upgrade-bottom"><span>Gain +${developmentGain(stat.key, game.facilities)}</span>${action('Améliorer', 'car', stat.key)}</div></article>`).join('')}</div>
+  </div>`;
 }
 
 function renderTeam() {
-  const drivers = game.drivers.map((driver) => `<div class="driver-card"><strong>${escapeHtml(driver.name)}</strong><span>${escapeHtml(driver.nationality)} · Niveau ${driver.rating}/${driver.potential}</span><progress max="100" value="${driver.rating}"></progress><button type="button" data-driver="${escapeHtml(driver.id)}" ${driver.rating >= driver.potential || game.finance.budget < 500_000 ? 'disabled' : ''}>Entraîner (+${trainingGain(game.facilities)}) · ${money.format(500_000)}</button></div>`).join('');
-  return `<section class="dashboard"><article class="panel"><h2>Pilotes</h2><div class="drivers">${drivers}</div></article><article class="panel"><h2>Équipe</h2><div class="metrics">${metric('Ingénierie', game.staff.engineering)}${metric('Stratégie', game.staff.strategy)}${metric('Pit-stop', game.staff.pitStop)}</div></article><article class="panel"><h2>Infrastructures</h2><div class="actions">${action('Usine', 'facility', 'factory')}${action('Simulateur', 'facility', 'simulator')}${action('Soufflerie', 'facility', 'windTunnel')}</div></article></section>`;
+  const staff = [
+    { key:'engineering', label:'Ingénierie', detail:'Potentiel du département technique' },
+    { key:'strategy', label:'Stratégie', detail:'Impact sur la performance en course' },
+    { key:'pitStop', label:'Arrêts aux stands', detail:'Efficacité des plans à deux arrêts' }
+  ];
+  const facilities = [
+    { key:'factory', label:'Usine', detail:'Booste châssis et moteur' },
+    { key:'simulator', label:'Simulateur', detail:'Booste fiabilité et entraînement' },
+    { key:'windTunnel', label:'Soufflerie', detail:'Booste l’aérodynamique' }
+  ];
+  return `<div class="screen-stack">
+    <div class="screen-heading"><div><span class="eyebrow">TEAM OPERATIONS</span><h2>Ton <em>écurie</em></h2><p>Développe les talents, recrute l’expertise interne et investis intelligemment.</p></div><span class="tag-outline">${escapeHtml(game.team.name)}</span></div>
+    <div class="team-layout">
+      <section class="panel roster-panel"><div class="section-title"><div><span class="eyebrow">DRIVER LINE-UP</span><h3>Effectif des pilotes</h3></div><span class="tag-outline">${game.drivers.length} pilotes</span></div>
+        <div class="driver-grid">${game.drivers.map((driver,index) => `<div class="driver-tile"><div class="driver-portrait"><span>${String(index+1).padStart(2, '0')}</span><div>${escapeHtml(driver.name.split(' ').map(part => part[0] ?? '').slice(0,2).join(''))}</div></div><div class="driver-info"><strong>${escapeHtml(driver.name)}</strong><span>${escapeHtml(driver.nationality ?? '')} · Potentiel ${driver.potential}</span><div class="ability"><span>Note ${driver.rating}/100</span><progress max="100" value="${driver.rating}"></progress></div><button type="button" data-driver="${escapeHtml(driver.id)}" ${driver.rating >= driver.potential || game.finance.budget < 500_000 ? 'disabled' : ''}>Entraîner +${trainingGain(game.facilities)} · ${money.format(500_000)}</button></div></div>`).join('')}</div>
+      </section>
+      <div class="team-column"><article class="panel"><div class="section-title"><div><span class="eyebrow">PIT WALL</span><h3>Personnel</h3></div></div>
+        <div class="staff-list">${staff.map((item) => `<div class="staff-row"><div><strong>${item.label}</strong><span>${item.detail}</span></div><div class="staff-right"><span>${game.staff[item.key]}/100</span><button type="button" data-staff="${item.key}" ${game.staff[item.key]>=100 || game.finance.budget<750000 ? 'disabled':''}>+4 · ${money.format(750000)}</button></div></div>`).join('')}</div>
+      </article>
+      <article class="panel"><div class="section-title"><div><span class="eyebrow">FACILITIES</span><h3>Infrastructures</h3></div></div>
+        <div class="facility-list">${facilities.map((item) => `<div class="facility-row"><div><strong>${item.label}</strong><span>${item.detail} · Niveau ${game.facilities[item.key]}/10</span></div>${action('Améliorer', 'facility', item.key)}</div>`).join('')}</div>
+      </article></div>
+    </div>
+  </div>`;
 }
 
 function renderRace(race) {
