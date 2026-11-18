@@ -1,0 +1,20 @@
+name: Qualité du jeu
+
+on:
+  push:
+    branches:
+      - ameliorations-gameplay-strategie-2026
+  pull_request:
+
+jobs:
+  validation:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Récupérer le code
+        uses: actions/checkout@v4
+      - name: Configurer Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Vérification de la syntaxe et des règles
+        run: npm run check
