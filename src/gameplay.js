@@ -137,3 +137,20 @@ export function seasonTitleBonus(place, teamCount) {
   const position = Math.max(1, Number(place) || teamCount);
   return Math.max(0, (Math.max(1, teamCount) - position + 1) * 350_000);
 }
+
+
+export const DIFFICULTIES = Object.freeze({
+  rookie: Object.freeze({ id: 'rookie', label: 'Rookie', budgetFactor: 1.4, aiBonus: -8, aiProgress: 0.3, incomeFactor: 1.2, description: 'Plus de budget, adversaires moins agressifs.' }),
+  pro: Object.freeze({ id: 'pro', label: 'Pro', budgetFactor: 1, aiBonus: 0, aiProgress: 0.6, incomeFactor: 1, description: 'Le mode de gestion équilibré.' }),
+  legend: Object.freeze({ id: 'legend', label: 'Légende', budgetFactor: 0.72, aiBonus: 9, aiProgress: 0.9, incomeFactor: 0.9, description: 'Budget serré et rivaux très compétitifs.' }),
+});
+
+export function difficultyFor(id) {
+  return Object.hasOwn(DIFFICULTIES, id) ? DIFFICULTIES[id] : DIFFICULTIES.pro;
+}
+
+export function aiCompetition(roundIndex, difficultyId) {
+  const mode = difficultyFor(difficultyId);
+  const raceNumber = Math.max(0,Number(roundIndex) || 0);
+  return Math.min(24, mode.aiBonus + raceNumber * mode.aiProgress);
+}
