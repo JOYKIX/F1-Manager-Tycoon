@@ -80,6 +80,7 @@ function normalizeGame(data) {
   data.seasonTeams ??= [data.team];
   data.raceStrategies ??= {};
   data.raceTyres ??= {};
+  data.racePitPlans ??= {};
   data.sponsor = sponsorFor(data.sponsor).id;
   data.career ??= { races: data.raceIndex, wins: 0, podiums: 0, titles: 0, history: [] };
   data.finance.lastIncome ??= null;
@@ -194,7 +195,7 @@ function seasonStandings() {
 function simulateRaceResults(race) {
   if (game.results?.[race.round]) return game.results[race.round];
   syncPlayerEntrants();
-  const strategySeed = Object.entries(game.raceStrategies ?? {}).sort(([a], [b]) => a.localeCompare(b)).map(([id, choice]) => `${id}:${choice}`).join('|') + JSON.stringify(game.raceTyres ?? {});
+  const strategySeed = Object.entries(game.raceStrategies ?? {}).sort(([a], [b]) => a.localeCompare(b)).map(([id, choice]) => `${id}:${choice}`).join('|') + JSON.stringify(game.raceTyres ?? {}) + JSON.stringify(game.racePitPlans ?? {});
   const random = createRandom(seedFrom(`${game.year}-${race.round}-${game.team.id}-${game.car.chassis}-${game.car.aero}-${game.car.engine}-${game.car.reliability}-${strategySeed}`));
   const totalLaps = 50 + (seedFrom(`${race.name}-${race.circuit}`) % 26);
   const weather = raceWeather(game.year, race);
@@ -207,15 +208,17 @@ function simulateRaceResults(race) {
     const reliability = car.reliability;
     const strategyId = isPlayerTeam ? game.raceStrategies?.[entry.driver.id] : 'equilibre';
     const strategy = strategyFor(strategyId);
-    const tyre = isPlayerTeam ? tyreFor(game.raceTyres?.[entry.driver.id]).id : (weather.condition === 'wet' ? 'wet' : 'medium');
+    const tyre = isPlayerTeam ? tyreFor(game.raceTyres?.[entry.driver.id] ?? (weather.condition === 'wet' ? 'wet' : 'medium')).id : (weather.condition === 'wet' ? 'wet' : 'medium');
+    const pitPlan = isPlayerTeam ? Number(game.racePitPlans?.[entry.driver.id]) === 2 ? 2 : 1 : 1;
     const modifiers = tyreModifiers(tyre, weather);
     const incidentRoll = random();
-    const risk = Math.min(.65, retirementChance(reliability, strategy.id) * modifiers.incidentMultiplier);
+    const risk = Math.min(.65, retirementChance(reliability, strategy.id) * modifiers.incidentMultiplier * (pitPlan === 1 && tyre === 'soft' ? 1.25 : 1));
     const retired = incidentRoll < risk;
     const laps = retired ? Math.max(1, Math.floor(totalLaps * (.35 + random() * .58))) : totalLaps;
-    const score = (driverRating * 1.15) + (carScore * 1.45) + (staffScore * .45) + strategy.speedBonus + modifiers.speedBonus + ((random() - .5) * 28);
+    const pitBonus = pitPlan === 2 ? (tyre === 'soft' ? 6 : 1) + (isPlayerTeam ? (game.staff.pitStop - 60) / 8 : 0) : (tyre === 'soft' ? -4 : tyre === 'hard' ? 2 : 0);
+    const score = (driverRating * 1.15) + (carScore * 1.45) + (staffScore * .45) + strategy.speedBonus + modifiers.speedBonus + pitBonus + ((random() - .5) * 28);
     const qualifying = (driverRating * 1.1) + (carScore * 1.2) + ((random() - .5) * 32);
-    return { entry, score, qualifying, laps, retired, tyre };
+    return { entry, score, qualifying, laps, retired, tyre, pitPlan };
   });
   const qualifyingGrid = new Map([...rows].sort((a, b) => b.qualifying - a.qualifying).map((row, index) => [row, index + 1]));
   rows.forEach((row) => { row.score += Math.max(0, 12 - qualifyingGrid.get(row)) * .35; });
@@ -224,6 +227,7 @@ function simulateRaceResults(race) {
     position: index + 1,
     grid: qualifyingGrid.get(row),
     tyre: row.tyre,
+    pitPlan: row.pitPlan,
     laps: row.laps,
     status: row.retired ? 'Abandon' : 'Terminé',
     driverId: row.entry.driver.id,
@@ -438,6 +442,7 @@ async function nextRace() {
   game.raceIndex += 1;
   game.raceStrategies = {};
   game.raceTyres = {};
+  game.racePitPlans = {};
   if (game.raceIndex === game.calendar.length) {
     const standings = seasonStandings();
     const rank = standings.constructors.find((entry) => entry.constructor === game.team.name)?.position ?? game.seasonTeams.length;
@@ -448,8 +453,10 @@ async function nextRace() {
     game.career.history.unshift({ year: game.year, team: game.team.name, place: rank, bonus });
   }
   if (game.raceIndex >= game.calendar.length && game.year < END_YEAR) {
-    const nextSeasonData = await fetchSeason(game.year + 1);
-    game.nextSeasonTeams = nextSeasonData.constructors;
+    try {
+      const nextSeasonData = await fetchSeason(game.year + 1);
+      game.nextSeasonTeams = nextSeasonData.constructors;
+    } catch { game.nextSeasonTeams = []; setStatus('Saison terminée. Le chargement de l’année suivante a échoué.'); }
   }
   raceReplay = null;
   pauseLiveRace();
@@ -474,13 +481,14 @@ async function nextSeason() {
   game.results = {};
   game.raceStrategies = {};
   game.raceTyres = {};
+  game.racePitPlans = {};
   game.nextSeasonTeams = null;
   raceReplay = null;
   saveGame();
   renderGame();
 }
 
-function restartGame() { pauseLiveRace(); raceReplay = null; game = null; try { localStorage.removeItem(SAVE_KEY); } catch { /* Stockage indisponible */ } gamePanel.classList.add('hidden'); setupPanel.classList.remove('hidden'); setStatus(''); }
+function restartGame() { if (!window.confirm('Effacer ta carrière et recommencer ? Exporte ta sauvegarde avant de continuer si tu veux la conserver.')) return; pauseLiveRace(); raceReplay = null; game = null; try { localStorage.removeItem(SAVE_KEY); } catch { /* Stockage indisponible */ } gamePanel.classList.add('hidden'); setupPanel.classList.remove('hidden'); setStatus(''); }
 
 async function populateTeams(year) {
   teamSelect.disabled = true;
@@ -499,7 +507,7 @@ async function startGame(formData) {
   const firstName = formData.get('firstName').toString().trim();
   const lastName = formData.get('lastName').toString().trim();
   const drivers = await driversForTeam(year, team.id);
-  game = { raceStrategies: {}, raceTyres: {}, sponsor: 'regularite', career: { races: 0, wins: 0, podiums: 0, titles: 0, history: [] }, year, manager: { firstName, lastName, birthDate, lifeExpectancy: lifeExpectancy(firstName, lastName, birthDate) }, team, seasonTeams: season.constructors, drivers, driverSelection: { first: drivers[0]?.id ?? '', second: drivers[1]?.id ?? '' }, calendar: season.races, raceIndex: 0, car: teamCarStats(team), staff: { engineering: 60, strategy: 60, pitStop: 60 }, facilities: { factory: 1, simulator: 1, windTunnel: 1 }, finance: { budget: baseBudget(year, season.constructors.length), income: 0, expenses: 0 }, results: {} };
+  game = { raceStrategies: {}, raceTyres: {}, racePitPlans: {}, sponsor: 'regularite', career: { races: 0, wins: 0, podiums: 0, titles: 0, history: [] }, year, manager: { firstName, lastName, birthDate, lifeExpectancy: lifeExpectancy(firstName, lastName, birthDate) }, team, seasonTeams: season.constructors, drivers, driverSelection: { first: drivers[0]?.id ?? '', second: drivers[1]?.id ?? '' }, calendar: season.races, raceIndex: 0, car: teamCarStats(team), staff: { engineering: 60, strategy: 60, pitStop: 60 }, facilities: { factory: 1, simulator: 1, windTunnel: 1 }, finance: { budget: baseBudget(year, season.constructors.length), income: 0, expenses: 0 }, results: {} };
   game.entrants = await buildEntrants(year, season.constructors, team.id, selectedRaceDrivers());
   setupPanel.classList.add('hidden');
   gamePanel.classList.remove('hidden');
@@ -518,6 +526,14 @@ setupForm.addEventListener('submit', (event) => { event.preventDefault(); startG
 document.addEventListener('change', (event) => {
   const target = event.target;
   if (!(target instanceof HTMLSelectElement) || !game) return;
+  if (target.dataset.pitDriver) {
+    if (raceReplay || game.results?.[game.calendar[game.raceIndex]?.round]) return;
+    if (!game.drivers.some((driver) => driver.id === target.dataset.pitDriver)) return;
+    game.racePitPlans ??= {};
+    game.racePitPlans[target.dataset.pitDriver] = target.value === '2' ? 2 : 1;
+    saveGame(); renderGame();
+    return;
+  }
   if (target.dataset.tyreDriver) {
     if (raceReplay || game.results?.[game.calendar[game.raceIndex]?.round]) return;
     if (!game.drivers.some((driver) => driver.id === target.dataset.tyreDriver)) return;
@@ -556,7 +572,8 @@ document.addEventListener('click', (event) => {
   if (target.dataset.live === 'pause') pauseLiveRace();
   if (target.dataset.live === 'speed') changeRaceSpeed();
   if (target.id === 'next-race') nextRace();
-  if (target.id === 'next-season') nextSeason();
+  if (target.id === 'next-season') nextSeason().catch(() => setStatus('Impossible de charger la saison suivante. Réessaie.'));
+  if (target.id === 'export-save') exportSave();
   if (target.id === 'restart-game') restartGame();
 });
 
