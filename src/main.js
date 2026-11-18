@@ -1,4 +1,4 @@
-import { STRATEGIES, strategyFor, retirementChance, developmentGain, trainingGain, facilityCost, raceIncome } from './gameplay.js';
+import { STRATEGIES, strategyFor, retirementChance, developmentGain, trainingGain, facilityCost, raceIncome, TYRES, tyreFor, tyreModifiers, raceWeather, SPONSORS, sponsorFor, sponsorPayout, pointsForYear, seasonTitleBonus } from './gameplay.js';
 
 const START_YEAR = 1950;
 const END_YEAR = 2026;
@@ -58,12 +58,38 @@ function maxBirthDate(year) { return `${year - MIN_MANAGER_AGE}-12-31`; }
 function lifeExpectancy(firstName, lastName, birthDate) { return 72 + (`${firstName}${lastName}${birthDate}`.split('').reduce((total, char) => total + char.charCodeAt(0), 0) % 24); }
 function baseBudget(year, teamCount) { return Math.round((8_000_000 + teamCount * 650_000) * (1 + ((year - START_YEAR) / 45))); }
 function createSeasonShell(year) { return { year, constructors: [], drivers: [], races: [], constructorDrivers: new Map() }; }
-function pointsForPosition(position) { return [25, 18, 15, 12, 10, 8, 6, 4, 2, 1][position - 1] ?? 0; }
 function teamCarStats(team) { const base = team.strength ?? 60; return { chassis: base, aero: base, engine: base, reliability: 70 }; }
 function carAverage(car) { return (car.chassis + car.aero + car.engine + car.reliability) / 4; }
-function saveGame() { try { localStorage.setItem(SAVE_KEY, JSON.stringify(game)); setStatus('Sauvegardé'); } catch { setStatus('Sauvegarde impossible : stockage indisponible'); } }
-function loadSavedGame() { try { const saved = localStorage.getItem(SAVE_KEY); return saved ? JSON.parse(saved) : null; } catch { return null; } }
-function metric(label, value) { return `<div><span>${label}</span><strong>${value}</strong></div>`; }
+function saveGame() { try { localStorage.setItem(SAVE_KEY, JSON.stringify(game)); setStatus('Sauvegarde automatique ✓'); } catch { setStatus('Sauvegarde impossible : stockage indisponible'); } }
+function isValidGame(data) {
+  return Boolean(data && typeof data === 'object'
+    && Number.isInteger(data.year) && data.year >= START_YEAR && data.year <= END_YEAR
+    && data.team && typeof data.team.id === 'string' && typeof data.team.name === 'string'
+    && data.manager && typeof data.manager.firstName === 'string' && typeof data.manager.lastName === 'string'
+    && typeof data.manager.birthDate === 'string' && Array.isArray(data.calendar)
+    && data.calendar.length > 0 && Array.isArray(data.drivers)
+    && Array.isArray(data.entrants) && Number.isInteger(data.raceIndex)
+    && data.raceIndex >= 0 && data.raceIndex <= data.calendar.length
+    && data.car && Number.isFinite(data.car.chassis) && Number.isFinite(data.car.reliability)
+    && data.staff && Number.isFinite(data.staff.strategy) && Number.isFinite(data.staff.pitStop)
+    && data.finance && Number.isFinite(data.finance.budget) && data.facilities);
+}
+function normalizeGame(data) {
+  if (!isValidGame(data)) return null;
+  data.results ??= {};
+  data.seasonTeams ??= [data.team];
+  data.raceStrategies ??= {};
+  data.raceTyres ??= {};
+  data.sponsor = sponsorFor(data.sponsor).id;
+  data.career ??= { races: data.raceIndex, wins: 0, podiums: 0, titles: 0, history: [] };
+  data.finance.lastIncome ??= null;
+  return data;
+}
+function loadSavedGame() {
+  try { const saved = localStorage.getItem(SAVE_KEY); return saved ? normalizeGame(JSON.parse(saved)) : null; }
+  catch { return null; }
+}
+function metric(label, value) { return `<div><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong></div>`; }
 function escapeHtml(value) { return String(value).replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;'); }
 function seedFrom(value) { return String(value).split('').reduce((total, char) => ((total * 31) + char.charCodeAt(0)) >>> 0, 2166136261); }
 function createRandom(seed) { let state = seed || 1; return () => { state = (state * 1664525 + 1013904223) >>> 0; return state / 4294967296; }; }
@@ -139,6 +165,7 @@ function changeRaceDriver(slot, driverId) {
   const otherSlot = slot === 'first' ? 'second' : 'first';
   if (game.driverSelection[otherSlot] === driverId) game.driverSelection[otherSlot] = game.driverSelection[slot];
   game.driverSelection[slot] = driverId;
+  game.raceTyres ??= {};
   syncPlayerEntrants();
   saveGame();
   renderGame();
@@ -167,9 +194,10 @@ function seasonStandings() {
 function simulateRaceResults(race) {
   if (game.results?.[race.round]) return game.results[race.round];
   syncPlayerEntrants();
-  const strategySeed = Object.entries(game.raceStrategies ?? {}).sort(([a], [b]) => a.localeCompare(b)).map(([id, choice]) => `${id}:${choice}`).join('|');
+  const strategySeed = Object.entries(game.raceStrategies ?? {}).sort(([a], [b]) => a.localeCompare(b)).map(([id, choice]) => `${id}:${choice}`).join('|') + JSON.stringify(game.raceTyres ?? {});
   const random = createRandom(seedFrom(`${game.year}-${race.round}-${game.team.id}-${game.car.chassis}-${game.car.aero}-${game.car.engine}-${game.car.reliability}-${strategySeed}`));
   const totalLaps = 50 + (seedFrom(`${race.name}-${race.circuit}`) % 26);
+  const weather = raceWeather(game.year, race);
   const rows = game.entrants.map((entry) => {
     const isPlayerTeam = entry.team.id === game.team.id;
     const car = isPlayerTeam ? game.car : entry.car;
@@ -179,15 +207,23 @@ function simulateRaceResults(race) {
     const reliability = car.reliability;
     const strategyId = isPlayerTeam ? game.raceStrategies?.[entry.driver.id] : 'equilibre';
     const strategy = strategyFor(strategyId);
+    const tyre = isPlayerTeam ? tyreFor(game.raceTyres?.[entry.driver.id]).id : (weather.condition === 'wet' ? 'wet' : 'medium');
+    const modifiers = tyreModifiers(tyre, weather);
     const incidentRoll = random();
-    const retired = incidentRoll < retirementChance(reliability, strategy.id);
+    const risk = Math.min(.65, retirementChance(reliability, strategy.id) * modifiers.incidentMultiplier);
+    const retired = incidentRoll < risk;
     const laps = retired ? Math.max(1, Math.floor(totalLaps * (.35 + random() * .58))) : totalLaps;
-    const score = (driverRating * 1.15) + (carScore * 1.45) + (staffScore * .35) + strategy.speedBonus + ((random() - .5) * 28);
-    return { entry, score, laps, retired };
-  }).sort((a, b) => Number(a.retired) - Number(b.retired) || (a.retired ? b.laps - a.laps : b.score - a.score));
+    const score = (driverRating * 1.15) + (carScore * 1.45) + (staffScore * .45) + strategy.speedBonus + modifiers.speedBonus + ((random() - .5) * 28);
+    const qualifying = (driverRating * 1.1) + (carScore * 1.2) + ((random() - .5) * 32);
+    return { entry, score, qualifying, laps, retired, tyre };
+  });
+  const qualifyingGrid = new Map([...rows].sort((a, b) => b.qualifying - a.qualifying).map((row, index) => [row, index + 1]));
+  rows.forEach((row) => { row.score += Math.max(0, 12 - qualifyingGrid.get(row)) * .35; });
+  rows.sort((a, b) => Number(a.retired) - Number(b.retired) || (a.retired ? b.laps - a.laps : b.score - a.score));
   const results = rows.map((row, index) => ({
     position: index + 1,
-    grid: Math.max(1, Math.round(index + 1 + ((random() - .5) * 8))),
+    grid: qualifyingGrid.get(row),
+    tyre: row.tyre,
     laps: row.laps,
     status: row.retired ? 'Abandon' : 'Terminé',
     driverId: row.entry.driver.id,
@@ -195,7 +231,7 @@ function simulateRaceResults(race) {
     constructorId: row.entry.team.id,
     constructor: row.entry.team.name,
     nationality: row.entry.team.nationality,
-    points: row.retired ? 0 : pointsForPosition(index + 1),
+    points: row.retired ? 0 : pointsForYear(game.year, index + 1),
   }));
   game.results ??= {};
   game.results[race.round] = results;
