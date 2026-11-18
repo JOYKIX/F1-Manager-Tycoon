@@ -1,4 +1,4 @@
-import { STRATEGIES, strategyFor, retirementChance, developmentGain, trainingGain, facilityCost, raceIncome, TYRES, tyreFor, tyreModifiers, raceWeather, SPONSORS, sponsorFor, sponsorPayout, pointsForYear, seasonTitleBonus } from './gameplay.js';
+import { STRATEGIES, strategyFor, retirementChance, developmentGain, trainingGain, facilityCost, raceIncome, TYRES, tyreFor, tyreModifiers, raceWeather, SPONSORS, sponsorFor, sponsorPayout, pointsForYear, seasonTitleBonus, DIFFICULTIES, difficultyFor, aiCompetition } from './gameplay.js';
 
 const START_YEAR = 1950;
 const END_YEAR = 2026;
@@ -82,6 +82,7 @@ function normalizeGame(data) {
   data.raceTyres ??= {};
   data.racePitPlans ??= {};
   data.sponsor = sponsorFor(data.sponsor).id;
+  data.difficulty = difficultyFor(data.difficulty).id;
   data.career ??= { races: data.raceIndex, wins: 0, podiums: 0, titles: 0, history: [] };
   data.finance.lastIncome ??= null;
   if (!Array.isArray(data.career.history)) data.career.history = [];
@@ -205,7 +206,7 @@ function simulateRaceResults(race) {
     const isPlayerTeam = entry.team.id === game.team.id;
     const car = isPlayerTeam ? game.car : entry.car;
     const driverRating = entry.driver.rating;
-    const carScore = carAverage(car);
+    const carScore = carAverage(car) + (isPlayerTeam ? 0 : aiCompetition(game.raceIndex,game.difficulty));
     const staffScore = isPlayerTeam ? ((game.staff.strategy + game.staff.pitStop) / 2) : entry.team.strength;
     const reliability = car.reliability;
     const strategyId = isPlayerTeam ? game.raceStrategies?.[entry.driver.id] : 'equilibre';
@@ -264,6 +265,8 @@ function renderShell() {
   document.querySelector('#current-season').textContent = String(game.year);
   document.querySelector('#current-team').textContent = game.team.name;
   document.querySelector('#budget').textContent = money.format(game.finance.budget);
+  const level = document.querySelector('#difficulty-level');
+  if (level) level.textContent = difficultyFor(game.difficulty).label;
   pageNav.replaceChildren(...pages.map(([key, label, symbol]) => {
     const button = document.createElement('button');
     button.type = 'button'; button.dataset.page = key; button.className = key === activePage ? 'active' : '';
@@ -313,7 +316,7 @@ function renderHome(profile, race) {
         <p class="hero-label">${title}</p>
         <h2 class="hero-title">${escapeHtml(champion ? 'Championnat bouclé' : race?.name ?? 'À venir')}</h2>
         <p class="hero-subtitle">${escapeHtml(subtitle)}</p>
-        <div class="hero-tags"><span>◈ ${escapeHtml(race?.circuit ?? game.team.name)}</span><span>${weather?.icon ?? '★'} ${weather?.label ?? 'Bilan'}</span><span>${weather?.temperature ?? '—'}°C</span></div>
+        <div class="hero-tags"><span>◈ ${escapeHtml(race?.circuit ?? game.team.name)}</span><span>${escapeHtml(difficultyFor(game.difficulty).label)}</span><span>${weather?.icon ?? '★'} ${weather?.label ?? 'Bilan'}</span><span>${weather?.temperature ?? '—'}°C</span></div>
         <button class="primary-cta" type="button" data-page-jump="${champion ? 'finance' : 'race'}">${champion ? 'Préparer la saison suivante' : 'Préparer la course'} <span aria-hidden="true">→</span></button>
       </div>
       <div class="hero-art" aria-hidden="true"><div class="hero-orbit orbit-one"></div><div class="hero-orbit orbit-two"></div><div class="hero-number">${String(game.year).slice(-2)}</div><div class="hero-watermark">RACE<br>CONTROL</div></div>
@@ -607,7 +610,7 @@ async function nextRace() {
   if (game.raceIndex >= game.calendar.length) return;
   const race = game.calendar[game.raceIndex];
   simulateRaceResults(race);
-  const prize = raceIncome(game.results[race.round], game.team.id);
+  const prize = Math.round(raceIncome(game.results[race.round], game.team.id) * difficultyFor(game.difficulty).incomeFactor);
   const sponsor = sponsorPayout(game.sponsor, game.results[race.round], game.team.id);
   const income = prize + sponsor.total;
   game.finance.income += income;
@@ -719,7 +722,7 @@ async function startGame(formData) {
   const firstName = formData.get('firstName').toString().trim();
   const lastName = formData.get('lastName').toString().trim();
   const drivers = await driversForTeam(year, team.id);
-  game = { raceStrategies: {}, raceTyres: {}, racePitPlans: {}, sponsor: 'regularite', career: { races: 0, wins: 0, podiums: 0, titles: 0, history: [] }, year, manager: { firstName, lastName, birthDate, lifeExpectancy: lifeExpectancy(firstName, lastName, birthDate) }, team, seasonTeams: season.constructors, drivers, driverSelection: { first: drivers[0]?.id ?? '', second: drivers[1]?.id ?? '' }, calendar: season.races, raceIndex: 0, car: teamCarStats(team), staff: { engineering: 60, strategy: 60, pitStop: 60 }, facilities: { factory: 1, simulator: 1, windTunnel: 1 }, finance: { budget: baseBudget(year, season.constructors.length), income: 0, expenses: 0 }, results: {} };
+  game = { raceStrategies: {}, raceTyres: {}, racePitPlans: {}, sponsor: 'regularite', difficulty: difficultyFor(formData.get('difficulty')).id, career: { races: 0, wins: 0, podiums: 0, titles: 0, history: [] }, year, manager: { firstName, lastName, birthDate, lifeExpectancy: lifeExpectancy(firstName, lastName, birthDate) }, team, seasonTeams: season.constructors, drivers, driverSelection: { first: drivers[0]?.id ?? '', second: drivers[1]?.id ?? '' }, calendar: season.races, raceIndex: 0, car: teamCarStats(team), staff: { engineering: 60, strategy: 60, pitStop: 60 }, facilities: { factory: 1, simulator: 1, windTunnel: 1 }, finance: { budget: Math.round(baseBudget(year, season.constructors.length) * difficultyFor(formData.get('difficulty')).budgetFactor), income: 0, expenses: 0 }, results: {} };
   game.entrants = await buildEntrants(year, season.constructors, team.id, selectedRaceDrivers());
   setupPanel.classList.add('hidden');
   gamePanel.classList.remove('hidden');
