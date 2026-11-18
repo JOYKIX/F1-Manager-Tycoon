@@ -38,6 +38,7 @@
           <form id="setup-form" class="setup-grid">
             <label>Année de départ<select id="season-select" name="season" required></select></label>
             <label>Écurie<select id="team-select" name="team" required disabled></select></label>
+            <label>Difficulté<select id="difficulty-select" name="difficulty"><option value="rookie">Rookie · Accessible</option><option value="pro" selected>Pro · Équilibré</option><option value="legend">Légende · Exigeant</option></select></label>
             <label>Prénom<input id="first-name" name="firstName" maxlength="40" autocomplete="given-name" placeholder="Prénom" required /></label>
             <label>Nom<input id="last-name" name="lastName" maxlength="40" autocomplete="family-name" placeholder="Nom" required /></label>
             <label>Date de naissance<input id="birth-date" name="birthDate" type="date" required /></label>
@@ -55,6 +56,7 @@
             <div><dt>Écurie</dt><dd id="current-team"></dd></div>
             <div><dt>Saison</dt><dd id="current-season"></dd></div>
             <div><dt>Budget</dt><dd id="budget"></dd></div>
+            <div><dt>Difficulté</dt><dd id="difficulty-level"></dd></div>
             <div><dt>Âge</dt><dd><span id="manager-age"></span> ans</dd></div>
             <div><dt>Espérance de vie</dt><dd id="manager-life"></dd></div>
           </dl>
