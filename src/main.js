@@ -28,14 +28,14 @@ let raceSpeed = 1;
 let raceReplay = null;
 
 const pages = [
-  ['home', 'Accueil'],
-  ['race', 'Course'],
-  ['results', 'Résultats'],
-  ['standings', 'Classements'],
-  ['team', 'Équipe'],
-  ['car', 'Voiture'],
-  ['calendar', 'Calendrier'],
-  ['finance', 'Finances'],
+  ['home', 'Dashboard', '◈'],
+  ['race', 'Course', '⚑'],
+  ['results', 'Résultats', '▤'],
+  ['standings', 'Classements', '▥'],
+  ['team', 'Mon écurie', '♟'],
+  ['car', 'Développement', '⚙'],
+  ['calendar', 'Calendrier', '▦'],
+  ['finance', 'Finances', '€'],
 ];
 
 const regulationProfiles = [
@@ -262,7 +262,19 @@ function renderShell() {
   document.querySelector('#current-season').textContent = String(game.year);
   document.querySelector('#current-team').textContent = game.team.name;
   document.querySelector('#budget').textContent = money.format(game.finance.budget);
-  pageNav.replaceChildren(...pages.map(([key, label]) => { const button = document.createElement('button'); button.type = 'button'; button.dataset.page = key; button.className = key === activePage ? 'active' : ''; button.textContent = label; return button; }));
+  pageNav.replaceChildren(...pages.map(([key, label, symbol]) => {
+    const button = document.createElement('button');
+    button.type = 'button'; button.dataset.page = key; button.className = key === activePage ? 'active' : '';
+    button.setAttribute('aria-current', key === activePage ? 'page' : 'false');
+    const glyph = document.createElement('span'); glyph.className = 'nav-glyph'; glyph.setAttribute('aria-hidden', 'true'); glyph.textContent = symbol;
+    const caption = document.createElement('span'); caption.textContent = label;
+    button.append(glyph, caption);
+    return button;
+  }));
+  const tag = document.querySelector('#header-season');
+  if (tag) tag.textContent = 'SAISON ' + game.year;
+  const exportButton = document.querySelector('#export-save');
+  if (exportButton) exportButton.disabled = false;
 }
 
 function renderGame() {
@@ -274,6 +286,7 @@ function renderGame() {
   workspace.innerHTML = renders[activePage]?.() ?? renders.home();
   if (activePage === 'results') renderResultsTable();
   if (activePage === 'standings') renderStandingsTables();
+  document.title = `${game.year} · ${pages.find(([key]) => key === activePage)?.[1] ?? 'F1 Manager'} | F1 Manager Tycoon`;
 }
 
 function renderHome(profile, race) {
@@ -373,6 +386,7 @@ function renderTeam() {
 }
 
 function renderRace(race) {
+  if (game.raceIndex >= game.calendar.length) return '<section class="panel empty-state"><strong>Saison terminée !</strong><p>Rends-toi aux finances pour préparer le prochain chapitre de ta carrière.</p><button type="button" data-page-jump="finance">Voir le bilan →</button></section>';
   if (!race) return '<section class="panel empty-state">Aucun Grand Prix à disputer.</section>';
   ensureDriverSelection();
   const weather = raceWeather(game.year, race);
@@ -481,23 +495,26 @@ function renderResultsTable() {
   const container = document.querySelector('#results-table');
   if (!container || !game) return;
   const completed = game.calendar.slice(0, game.raceIndex);
-  if (!completed.length) { container.textContent = ''; return; }
-  const race = completed.at(-1);
+  if (!completed.length) { container.innerHTML = '<div class="empty-state"><strong>Aucun Grand Prix disputé.</strong><p>Lance ta première course pour afficher les résultats ici.</p></div>'; return; }
+  const race = completed.find((item) => Number(item.round) === Number(game.viewRound)) ?? completed.at(-1);
   const results = game.results?.[race.round] ?? [];
-  const rows = results.map((r, index) => `<tr class="${positionClass(index)}"><td>${r.position}</td><td>${escapeHtml(r.driver)}</td><td>${escapeHtml(r.constructor)}</td><td>${r.laps}</td><td>${escapeHtml(r.status)}</td><td>${r.points}</td></tr>`);
-  container.innerHTML = `<h3>${escapeHtml(race.name)}</h3>${renderTable(['P', 'Pilote', 'Écurie', 'Tours', 'Statut', 'Pts'], rows)}`;
+  const weather = raceWeather(game.year, race);
+  const rows = results.map((r,index) => `<tr class="${positionClass(index)} ${r.constructorId === game.team.id ? 'highlight-row' : ''}"><td class="position-cell">${r.position}</td><td>${r.grid ?? '—'}</td><td><strong>${escapeHtml(r.driver)}</strong></td><td>${escapeHtml(r.constructor)}</td><td>${r.tyre ? escapeHtml(tyreFor(r.tyre).label) : '—'}</td><td>${r.laps}</td><td><span class="${r.status === 'Abandon' ? 'status-danger' : 'status-success'}">${escapeHtml(r.status)}</span></td><td class="points-cell">${r.points}</td></tr>`);
+  container.innerHTML = `<div class="results-head"><div><span class="eyebrow">ROUND ${race.round} · ${weather.icon} ${weather.label}</span><h3>${escapeHtml(race.name)}</h3><p>${escapeHtml(race.circuit)}</p></div><span class="tag-outline">${results.length} pilotes classés</span></div><div class="table-scroll">${renderTable(['POS', 'GRILLE', 'PILOTE', 'ÉCURIE', 'GOMME', 'TOURS', 'STATUT', 'PTS'], rows, 'Aucun résultat.')}</div>`;
 }
+
 function renderStandingsTables() {
   const driverContainer = document.querySelector('#driver-standings');
   const constructorContainer = document.querySelector('#constructor-standings');
   if (!driverContainer || !constructorContainer || !game) return;
-  if (!game.raceIndex) { driverContainer.textContent = ''; constructorContainer.textContent = ''; return; }
+  if (!game.raceIndex) { driverContainer.innerHTML = '<p class="empty-copy">En attente du premier Grand Prix.</p>'; constructorContainer.innerHTML = '<p class="empty-copy">En attente du premier Grand Prix.</p>'; return; }
   const standings = seasonStandings();
-  const driverRows = standings.drivers.map((standing, index) => `<tr class="${positionClass(index)}"><td>${standing.position}</td><td>${escapeHtml(standing.driver)}</td><td>${escapeHtml(standing.constructor)}</td><td>${standing.wins}</td><td>${standing.points}</td></tr>`);
-  const constructorRows = standings.constructors.map((standing, index) => `<tr class="${positionClass(index)}"><td>${standing.position}</td><td>${escapeHtml(standing.constructor)}</td><td>${escapeHtml(standing.nationality)}</td><td>${standing.wins}</td><td>${standing.points}</td></tr>`);
-  driverContainer.innerHTML = renderTable(['P', 'Pilote', 'Écurie', 'V', 'Pts'], driverRows);
-  constructorContainer.innerHTML = renderTable(['P', 'Constructeur', 'Pays', 'V', 'Pts'], constructorRows);
+  const driverRows = standings.drivers.map((standing,index) => `<tr class="${positionClass(index)} ${game.drivers.some((driver) => driver.name === standing.driver) ? 'highlight-row' : ''}"><td class="position-cell">${standing.position}</td><td><strong>${escapeHtml(standing.driver)}</strong></td><td>${escapeHtml(standing.constructor)}</td><td>${standing.wins}</td><td class="points-cell">${standing.points}</td></tr>`);
+  const constructorRows = standings.constructors.map((standing,index) => `<tr class="${positionClass(index)} ${standing.constructor === game.team.name ? 'highlight-row' : ''}"><td class="position-cell">${standing.position}</td><td><strong>${escapeHtml(standing.constructor)}</strong></td><td>${escapeHtml(standing.nationality)}</td><td>${standing.wins}</td><td class="points-cell">${standing.points}</td></tr>`);
+  driverContainer.innerHTML = renderTable(['POS', 'PILOTE', 'ÉCURIE', 'V', 'PTS'],driverRows);
+  constructorContainer.innerHTML = renderTable(['POS', 'ÉCURIE', 'PAYS', 'V', 'PTS'],constructorRows);
 }
+
 function spend(amount) { if (game.finance.budget < amount) { setStatus('Budget insuffisant'); return false; } game.finance.budget -= amount; game.finance.expenses += amount; return true; }
 function developCar(key) { if (!Object.hasOwn(game.car, key) || game.car[key] >= 100 || !spend(1_000_000)) return; game.car[key] = Math.min(100, game.car[key] + developmentGain(key, game.facilities)); saveGame(); renderGame(); }
 function upgradeFacility(key) { if (!Object.hasOwn(game.facilities, key) || game.facilities[key] >= 10 || !spend(facilityCost(game.facilities[key]))) return; game.facilities[key] += 1; game.staff.engineering = Math.min(100, game.staff.engineering + 1); saveGame(); renderGame(); }
@@ -694,6 +711,7 @@ document.addEventListener('change', (event) => {
     saveGame(); renderGame();
     return;
   }
+  if (target.id === 'results-race-select') { game.viewRound = Number(target.value); renderResultsTable(); return; }
   if (target.id === 'sponsor-select') {
     if (raceReplay || game.results?.[game.calendar[game.raceIndex]?.round]) return;
     game.sponsor = sponsorFor(target.value).id;
@@ -714,7 +732,7 @@ document.addEventListener('change', (event) => {
 document.addEventListener('click', (event) => {
   const target = event.target;
   if (!(target instanceof HTMLButtonElement)) return;
-  if (target.dataset.page) { activePage = target.dataset.page; renderGame(); return; }
+  if (target.dataset.page || target.dataset.pageJump) { activePage = target.dataset.page ?? target.dataset.pageJump; renderGame(); window.scrollTo({ top: 0, behavior: 'smooth' }); return; }
   if (!game) return;
   if (target.dataset.car) developCar(target.dataset.car);
   if (target.dataset.facility) upgradeFacility(target.dataset.facility);
