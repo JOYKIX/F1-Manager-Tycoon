@@ -163,3 +163,9 @@ th { color: var(--muted); font-size: .76rem; letter-spacing: .08em; text-transfo
   .live-panel, .events-panel, .calendar-panel, .car-panel { grid-column: auto; }
   .manager-card { position: static; }
 }
+
+.strategy-help { color: var(--muted); font-size: .82rem; line-height: 1.5; }
+button:disabled { cursor: not-allowed; opacity: .45; box-shadow: none; filter: grayscale(.5); }
+button:focus-visible, input:focus-visible, select:focus-visible { outline: 3px solid #fff; outline-offset: 3px; }
+@media (max-width: 600px) { .race-controls { grid-template-columns: repeat(2, minmax(0, 1fr)); } .topbar { align-items: start; flex-direction: column; } .panel { padding: 16px; } table { display: block; overflow-x: auto; } }
+@media (prefers-reduced-motion: reduce) { *, *::before, *::after { transition-duration: .01ms !important; animation-duration: .01ms !important; } }
