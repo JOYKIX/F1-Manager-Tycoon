@@ -67,8 +67,8 @@ function isValidGame(data) {
     && data.team && typeof data.team.id === 'string' && typeof data.team.name === 'string'
     && data.manager && typeof data.manager.firstName === 'string' && typeof data.manager.lastName === 'string'
     && typeof data.manager.birthDate === 'string' && Array.isArray(data.calendar)
-    && data.calendar.length > 0 && Array.isArray(data.drivers)
-    && Array.isArray(data.entrants) && Number.isInteger(data.raceIndex)
+    && data.calendar.length > 0 && data.calendar.length <= 100 && data.calendar.every((race) => race && Number.isInteger(race.round) && typeof race.name === 'string' && typeof race.circuit === 'string' && typeof race.date === 'string') && Array.isArray(data.drivers)
+    && Array.isArray(data.entrants) && data.drivers.every((driver) => driver && typeof driver.id === 'string' && typeof driver.name === 'string') && Number.isInteger(data.raceIndex)
     && data.raceIndex >= 0 && data.raceIndex <= data.calendar.length
     && data.car && Number.isFinite(data.car.chassis) && Number.isFinite(data.car.reliability)
     && data.staff && Number.isFinite(data.staff.strategy) && Number.isFinite(data.staff.pitStop)
@@ -84,6 +84,8 @@ function normalizeGame(data) {
   data.sponsor = sponsorFor(data.sponsor).id;
   data.career ??= { races: data.raceIndex, wins: 0, podiums: 0, titles: 0, history: [] };
   data.finance.lastIncome ??= null;
+  if (!Array.isArray(data.career.history)) data.career.history = [];
+  if (!Number.isFinite(data.career.races)) data.career.races = data.raceIndex;
   return data;
 }
 function loadSavedGame() {
@@ -657,7 +659,40 @@ async function nextSeason() {
   renderGame();
 }
 
-function restartGame() { if (!window.confirm('Effacer ta carrière et recommencer ? Exporte ta sauvegarde avant de continuer si tu veux la conserver.')) return; pauseLiveRace(); raceReplay = null; game = null; try { localStorage.removeItem(SAVE_KEY); } catch { /* Stockage indisponible */ } gamePanel.classList.add('hidden'); setupPanel.classList.remove('hidden'); setStatus(''); }
+function restartGame() {
+  if (!window.confirm('Effacer ta carrière et recommencer ? Exporte ta sauvegarde avant de continuer si tu veux la conserver.')) return;
+  pauseLiveRace(); raceReplay = null; game = null;
+  try { localStorage.removeItem(SAVE_KEY); } catch { /* Stockage indisponible */ }
+  document.querySelector('#export-save').disabled = true;
+  gamePanel.classList.add('hidden'); setupPanel.classList.remove('hidden');
+  document.title = 'F1 Manager Tycoon — Race Control';
+  setStatus('Nouvelle carrière prête');
+}
+
+function exportSave() {
+  if (!game) return;
+  const content = JSON.stringify(game, null, 2);
+  const link = document.createElement('a');
+  const url = URL.createObjectURL(new Blob([content], { type: 'application/json' }));
+  link.href = url; link.download = 'f1-manager-' + game.year + '-sauvegarde.json';
+  document.body.append(link); link.click(); link.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 500);
+  setStatus('Sauvegarde exportée');
+}
+
+async function importSaveFile(file) {
+  if (!file) return;
+  if (file.size > 2_000_000) { setStatus('Fichier trop volumineux (maximum 2 Mo).'); return; }
+  let imported;
+  try { imported = normalizeGame(JSON.parse(await file.text())); }
+  catch { setStatus('Fichier JSON invalide.'); return; }
+  if (!imported) { setStatus('Ce fichier ne contient pas une carrière compatible.'); return; }
+  if (game && !window.confirm('Remplacer la carrière actuelle par cette sauvegarde ?')) return;
+  pauseLiveRace(); raceReplay = null;
+  game = imported; activePage = 'home'; ensureDriverSelection(); syncPlayerEntrants();
+  setupPanel.classList.add('hidden'); gamePanel.classList.remove('hidden');
+  saveGame(); renderGame(); setStatus('Carrière importée avec succès');
+}
 
 async function populateTeams(year) {
   teamSelect.disabled = true;
@@ -689,7 +724,16 @@ seasonSelect.value = String(END_YEAR);
 birthDateInput.max = maxBirthDate(END_YEAR);
 populateTeams(END_YEAR);
 
-seasonSelect.addEventListener('change', () => { const year = Number(seasonSelect.value); birthDateInput.max = maxBirthDate(year); populateTeams(year); });
+seasonSelect.addEventListener('change', () => {
+  const year = Number(seasonSelect.value);
+  birthDateInput.max = maxBirthDate(year);
+  populateTeams(year);
+});
+document.querySelector('#import-button').addEventListener('click', () => document.querySelector('#import-save').click());
+document.querySelector('#import-save').addEventListener('change', async (event) => {
+  await importSaveFile(event.target.files?.[0]);
+  event.target.value = '';
+});
 setupForm.addEventListener('submit', (event) => { event.preventDefault(); startGame(new FormData(setupForm)).catch(() => setStatus('Impossible de charger les données F1. Vérifie ta connexion et réessaie.')); });
 
 document.addEventListener('change', (event) => {
@@ -732,7 +776,7 @@ document.addEventListener('change', (event) => {
 document.addEventListener('click', (event) => {
   const target = event.target;
   if (!(target instanceof HTMLButtonElement)) return;
-  if (target.dataset.page || target.dataset.pageJump) { activePage = target.dataset.page ?? target.dataset.pageJump; renderGame(); window.scrollTo({ top: 0, behavior: 'smooth' }); return; }
+  if ((target.dataset.page || target.dataset.pageJump) && game) { activePage = target.dataset.page ?? target.dataset.pageJump; renderGame(); window.scrollTo({ top: 0, behavior: 'smooth' }); return; }
   if (!game) return;
   if (target.dataset.car) developCar(target.dataset.car);
   if (target.dataset.facility) upgradeFacility(target.dataset.facility);
@@ -748,5 +792,5 @@ document.addEventListener('click', (event) => {
 });
 
 const savedGame = loadSavedGame();
-if (savedGame) { game = savedGame; game.results ??= {}; game.seasonTeams ??= [game.team]; ensureDriverSelection(); game.entrants ??= []; syncPlayerEntrants(); setupPanel.classList.add('hidden'); gamePanel.classList.remove('hidden'); renderGame(); }
+if (savedGame) { game = savedGame; ensureDriverSelection(); syncPlayerEntrants(); setupPanel.classList.add('hidden'); gamePanel.classList.remove('hidden'); renderGame(); }
 else { setStatus(''); }
